@@ -2,9 +2,27 @@ import { toast } from 'react-hot-toast';
 import { requireSupabase } from './supabaseClient';
 export { validateUploadFile } from './uploadValidation';
 import { validateUploadFile } from './uploadValidation';
+export {
+  isGoogleDriveUrl,
+  isValidExternalUrl,
+  normalizeAssetLink,
+  openAssetLink,
+  parseGoogleDriveLink,
+} from './linkUtils';
+import { normalizeAssetLink, parseGoogleDriveLink } from './linkUtils';
 
 const byUpdated = (a, b) => new Date(b.updated_at) - new Date(a.updated_at);
 const byCreated = (a, b) => new Date(a.created_at) - new Date(b.created_at);
+const relationMissingPattern = /does not exist|schema cache|Could not find the table|Could not find.*column/i;
+
+async function optionalQuery(run, fallback = []) {
+  try {
+    return await run();
+  } catch (error) {
+    if (relationMissingPattern.test(error.message || '')) return fallback;
+    throw error;
+  }
+}
 
 function safeFileName(name) {
   return name
@@ -59,6 +77,15 @@ export async function updateUserRole(profile) {
   return data;
 }
 
+export async function updateClientProfile(profile) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase.from('users').upsert(profile).select().single();
+    if (error) throw error;
+    return data;
+  }, profile);
+}
+
 export async function deleteClientUser(userId) {
   const supabase = requireSupabase();
   const { data, error } = await supabase.functions.invoke('delete-client', {
@@ -100,9 +127,32 @@ export async function getProject(projectId, user) {
 
 export async function saveProject(payload) {
   const supabase = requireSupabase();
+  const drive = parseGoogleDriveLink(payload.drive_folder_url);
+  const normalized = {
+    ...payload,
+    drive_folder_url: payload.drive_folder_url?.trim() || null,
+    drive_folder_id: payload.drive_folder_id?.trim() || drive?.id || null,
+  };
   const { data, error } = await supabase
     .from('projects')
-    .upsert({ ...payload, updated_at: new Date().toISOString() })
+    .upsert({ ...normalized, updated_at: new Date().toISOString() })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProjectDriveFolder(projectId, { drive_folder_url, drive_folder_id }) {
+  const supabase = requireSupabase();
+  const drive = parseGoogleDriveLink(drive_folder_url);
+  const { data, error } = await supabase
+    .from('projects')
+    .update({
+      drive_folder_url: drive_folder_url?.trim() || null,
+      drive_folder_id: drive_folder_id?.trim() || drive?.id || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', projectId)
     .select()
     .single();
   if (error) throw error;
@@ -113,9 +163,29 @@ export async function getMessages(projectId, user) {
   const supabase = requireSupabase();
   let query = supabase.from('messages').select('*').order('created_at', { ascending: true });
   if (projectId) query = query.eq('project_id', projectId);
+  if (!projectId && user?.role !== 'admin') {
+    const projects = await getProjects(user);
+    const projectIds = projects.map((project) => project.id);
+    if (!projectIds.length) return [];
+    query = query.in('project_id', projectIds);
+  }
   const { data, error } = await query;
   if (error) throw error;
   return data;
+}
+
+export function subscribeToProjectMessages(projectId, onMessage) {
+  if (!projectId) return () => {};
+  const supabase = requireSupabase();
+  const channel = supabase
+    .channel(`messages:${projectId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `project_id=eq.${projectId}` },
+      (payload) => onMessage(payload.new),
+    )
+    .subscribe();
+  return () => supabase.removeChannel(channel);
 }
 
 export async function sendMessage({ project_id, sender, text }) {
@@ -171,6 +241,23 @@ export async function uploadProjectFile({ projectId, file, userId, onProgress })
   return uploadFile(file, projectId, userId, onProgress);
 }
 
+export async function uploadContractPdf({ projectId, file, userId, onProgress }) {
+  if (!file) return null;
+  validateUploadFile(file);
+  const supabase = requireSupabase();
+  const filePath = `${projectId}/contracts/${userId || 'admin'}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
+  onProgress?.(15);
+  const upload = await supabase.storage.from('project-files').upload(filePath, file, {
+    contentType: file.type || 'application/pdf',
+    upsert: false,
+  });
+  if (upload.error) throw upload.error;
+  onProgress?.(80);
+  const { data } = supabase.storage.from('project-files').getPublicUrl(filePath);
+  onProgress?.(100);
+  return data?.publicUrl || filePath;
+}
+
 export async function getProjectQuestions(projectId) {
   const supabase = requireSupabase();
   const { data, error } = await supabase
@@ -193,6 +280,25 @@ export async function addProjectQuestion({ projectId, question, type = 'textarea
   return data;
 }
 
+export async function updateProjectQuestion({ questionId, question, type = 'textarea', options = [] }) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from('questions')
+    .update({ question: question.trim(), type, options })
+    .eq('id', questionId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteProjectQuestion(questionId) {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from('questions').delete().eq('id', questionId);
+  if (error) throw error;
+  return true;
+}
+
 export async function answerProjectQuestion({ questionId, answer }) {
   const supabase = requireSupabase();
   const { data, error } = await supabase
@@ -204,6 +310,325 @@ export async function answerProjectQuestion({ questionId, answer }) {
   return data;
 }
 
+export async function getInvoices(projectId) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('id, project_id, created_by, invoice_number, title, amount, status, due_date, pdf_url, notes, created_at, updated_at')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  });
+}
+
+export async function saveInvoice(payload, user) {
+  const supabase = requireSupabase();
+  const normalized = {
+    ...payload,
+    amount: Number(payload.amount || 0),
+    status: payload.status || 'pending',
+    invoice_number: payload.invoice_number?.trim(),
+    title: payload.title?.trim() || payload.invoice_number?.trim(),
+    pdf_url: payload.pdf_url?.trim() || null,
+    notes: payload.notes?.trim() || null,
+    due_date: payload.due_date || null,
+    updated_at: new Date().toISOString(),
+  };
+  if (!normalized.id) {
+    normalized.created_by = user?.id;
+    delete normalized.id;
+  }
+  const { data, error } = await supabase.from('invoices').upsert(normalized).select().single();
+  if (error) {
+    if (relationMissingPattern.test(error.message || '')) {
+      throw new Error('The invoices table is missing in Supabase. Apply the latest invoice migration, then reload the portal.');
+    }
+    throw error;
+  }
+  return data;
+}
+
+export async function deleteInvoice(invoiceId) {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from('invoices').delete().eq('id', invoiceId);
+  if (error) {
+    if (relationMissingPattern.test(error.message || '')) {
+      throw new Error('The invoices table is missing in Supabase. Apply the latest invoice migration, then reload the portal.');
+    }
+    throw error;
+  }
+  return true;
+}
+
+export function isValidInvoiceUrl(value) {
+  return !value || normalizeAssetLink(value).isValid;
+}
+
+export function getInvoiceViewUrl(value) {
+  return normalizeAssetLink(value).viewUrl;
+}
+
+export function getInvoiceDownloadUrl(value) {
+  return normalizeAssetLink(value).downloadUrl;
+}
+
+export async function getContracts(projectId) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase
+      .from('contracts')
+      .select('id, project_id, title, contract_url, created_by, created_at')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  });
+}
+
+export async function saveContract(payload, user) {
+  const supabase = requireSupabase();
+  const normalized = {
+    ...payload,
+    title: payload.title?.trim(),
+    contract_url: payload.contract_url?.trim(),
+  };
+  if (!normalized.id) {
+    normalized.created_by = user?.id;
+    delete normalized.id;
+  }
+  const { data, error } = await supabase.from('contracts').upsert(normalized).select().single();
+  if (error) {
+    if (relationMissingPattern.test(error.message || '')) {
+      throw new Error('The contracts table is missing in Supabase. Apply the latest contract migration, then reload the portal.');
+    }
+    throw error;
+  }
+  return data;
+}
+
+export async function deleteContract(contractId) {
+  const supabase = requireSupabase();
+  const { error } = await supabase.from('contracts').delete().eq('id', contractId);
+  if (error) throw error;
+  return true;
+}
+
+function matchesTerm(values, term) {
+  const query = term.trim().toLowerCase();
+  return values.some((value) => String(value || '').toLowerCase().includes(query));
+}
+
+function result(type, title, description, href, date) {
+  return { id: `${type}-${href}-${title}`, type, title, description, href, date };
+}
+
+export async function globalSearch(user, term) {
+  const query = term.trim();
+  if (query.length < 2) return [];
+  const supabase = requireSupabase();
+  const projects = await getProjects(user);
+  const projectById = new Map(projects.map((project) => [project.id, project]));
+  const projectIds = projects.map((project) => project.id);
+  if (user?.role !== 'admin' && !projectIds.length) return [];
+
+  const output = projects
+    .filter((project) => matchesTerm([project.name, project.description, project.status], query))
+    .map((project) => result('project', project.name, project.status, user?.role === 'admin' ? `/admin/projects/${project.id}` : `/projects/${project.id}`, project.updated_at));
+
+  const scoped = (table) => {
+    let request = supabase.from(table).select('*').limit(60);
+    if (user?.role !== 'admin') request = request.in('project_id', projectIds);
+    return request;
+  };
+
+  const [users, invoices, files, messages, approvals, questions, contracts, questionnaireTemplates, questionnaireResponses] = await Promise.all([
+    user?.role === 'admin'
+      ? optionalQuery(async () => {
+        const { data, error } = await supabase.from('users').select('id,email,role,status').limit(80);
+        if (error) throw error;
+        return data || [];
+      })
+      : [],
+    optionalQuery(async () => {
+      const { data, error } = await scoped('invoices');
+      if (error) throw error;
+      return data || [];
+    }),
+    optionalQuery(async () => {
+      const { data, error } = await scoped('files');
+      if (error) throw error;
+      return data || [];
+    }),
+    optionalQuery(async () => {
+      const { data, error } = await scoped('messages');
+      if (error) throw error;
+      return data || [];
+    }),
+    optionalQuery(async () => {
+      const { data, error } = await scoped('approvals');
+      if (error) throw error;
+      return data || [];
+    }),
+    optionalQuery(async () => {
+      const { data, error } = await scoped('questions');
+      if (error) throw error;
+      return data || [];
+    }),
+    optionalQuery(async () => {
+      const { data, error } = await scoped('contracts');
+      if (error) throw error;
+      return data || [];
+    }),
+    user?.role === 'admin'
+      ? optionalQuery(async () => {
+        const { data, error } = await scoped('questionnaire_templates');
+        if (error) throw error;
+        return data || [];
+      })
+      : [],
+    user?.role === 'admin'
+      ? optionalQuery(async () => {
+        const { data, error } = await scoped('questionnaire_responses');
+        if (error) throw error;
+        return data || [];
+      })
+      : [],
+  ]);
+
+  if (user?.role === 'admin') {
+    users
+      .filter((client) => matchesTerm([client.email, client.role, client.status], query))
+      .forEach((client) => output.push(result('client', client.email, client.role, '/admin/clients', client.created_at)));
+  }
+
+  const projectHref = (projectId) => user?.role === 'admin' ? `/admin/projects/${projectId}` : `/projects/${projectId}`;
+  invoices
+    .filter((invoice) => matchesTerm([invoice.invoice_number, invoice.title, invoice.status, invoice.notes, projectById.get(invoice.project_id)?.name], query))
+    .forEach((invoice) => output.push(result('invoice', invoice.invoice_number || invoice.title, projectById.get(invoice.project_id)?.name || 'Invoice', projectHref(invoice.project_id), invoice.created_at)));
+  files
+    .filter((file) => matchesTerm([file.name, file.file_url, projectById.get(file.project_id)?.name], query))
+    .forEach((file) => output.push(result('file', file.name || 'Project file', projectById.get(file.project_id)?.name || 'File', projectHref(file.project_id), file.uploaded_at)));
+  messages
+    .filter((message) => matchesTerm([message.text, message.sender, projectById.get(message.project_id)?.name], query))
+    .forEach((message) => output.push(result('message', message.text, `${message.sender} message`, projectHref(message.project_id), message.created_at)));
+  approvals
+    .filter((approval) => matchesTerm([approval.title, approval.description, approval.status, approval.feedback, projectById.get(approval.project_id)?.name], query))
+    .forEach((approval) => output.push(result('approval', approval.title, approval.status, projectHref(approval.project_id), approval.created_at)));
+  questions
+    .filter((question) => matchesTerm([question.question, question.type, projectById.get(question.project_id)?.name], query))
+    .forEach((question) => output.push(result('questionnaire', question.question, projectById.get(question.project_id)?.name || 'Questionnaire', projectHref(question.project_id), question.created_at)));
+  contracts
+    .filter((contract) => matchesTerm([contract.title, contract.contract_url, projectById.get(contract.project_id)?.name], query))
+    .forEach((contract) => output.push(result('contract', contract.title, projectById.get(contract.project_id)?.name || 'Contract', projectHref(contract.project_id), contract.created_at)));
+  questionnaireTemplates
+    .filter((template) => matchesTerm([template.name, JSON.stringify(template.questions || []), projectById.get(template.project_id)?.name], query))
+    .forEach((template) => output.push(result('questionnaire', template.name, projectById.get(template.project_id)?.name || 'Questionnaire template', template.project_id ? projectHref(template.project_id) : '/admin/projects', template.updated_at || template.created_at)));
+  questionnaireResponses
+    .filter((response) => matchesTerm([JSON.stringify(response.answers || {}), response.submitted ? 'submitted' : 'draft', projectById.get(response.project_id)?.name], query))
+    .forEach((response) => output.push(result('questionnaire', response.submitted ? 'Submitted questionnaire' : 'Questionnaire draft', projectById.get(response.project_id)?.name || 'Questionnaire response', projectHref(response.project_id), response.updated_at || response.created_at)));
+
+  return output
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+    .slice(0, 12);
+}
+
+export function deriveInvoiceStatus(invoice) {
+  if (invoice.status === 'paid') return 'paid';
+  if (invoice.status === 'overdue') return 'overdue';
+  if (invoice.due_date && new Date(invoice.due_date) < new Date(new Date().toDateString())) return 'overdue';
+  return 'pending';
+}
+
+export function formatCurrency(value) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
+export async function getMeetings(projectId) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase
+      .from('meetings')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('starts_at', { ascending: true });
+    if (error) throw error;
+    return data || [];
+  });
+}
+
+export async function saveMeeting(payload) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from('meetings').upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getApprovals(projectId) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase
+      .from('approvals')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  });
+}
+
+export async function saveApproval(payload) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.from('approvals').upsert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function respondToApproval({ approvalId, status, feedback }) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase
+    .from('approvals')
+    .update({ status, feedback, responded_at: new Date().toISOString() })
+    .eq('id', approvalId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getNotifications(user) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .or(`user_id.eq.${user.id},audience.eq.${user.role}`)
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (error) throw error;
+    return data || [];
+  });
+}
+
+export async function markNotificationRead(notificationId) {
+  const supabase = requireSupabase();
+  return optionalQuery(async () => {
+    const { data, error } = await supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', notificationId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  }, null);
+}
+
 export function formatDate(value) {
   if (!value) return 'Not updated yet';
   return new Intl.DateTimeFormat('en', {
@@ -211,5 +636,13 @@ export function formatDate(value) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  }).format(new Date(value));
+}
+
+export function formatShortDate(value) {
+  if (!value) return 'No date';
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
   }).format(new Date(value));
 }

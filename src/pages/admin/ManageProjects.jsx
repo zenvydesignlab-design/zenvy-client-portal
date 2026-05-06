@@ -4,8 +4,9 @@ import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import Modal from '../../components/Modal';
 import ProgressBar from '../../components/ProgressBar';
+import StatusBadge from '../../components/StatusBadge';
 import UploadDropzone from '../../components/UploadDropzone';
-import { addProjectQuestion, formatDate, getUsers, saveProject } from '../../services/api';
+import { addProjectQuestion, formatDate, getUsers, parseGoogleDriveLink, saveProject } from '../../services/api';
 import { useProjects } from '../../hooks/useProjects';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -15,6 +16,9 @@ const initialProject = {
   status: 'Discovery',
   progress: 10,
   description: '',
+  deadline: '',
+  drive_folder_url: '',
+  drive_folder_id: '',
 };
 
 const defaultQuestion = { id: 'new_question', label: '', type: 'text', options: [] };
@@ -63,16 +67,21 @@ export default function ManageProjects() {
 
   const handleSubmit = async (event) => {
     event?.preventDefault();
+    const drive = parseGoogleDriveLink(form.drive_folder_url);
+    if (form.drive_folder_url && (!drive || drive.type !== 'folder')) {
+      toast.error('Use a valid Google Drive folder link');
+      return;
+    }
     setSaving(true);
     try {
-      const saved = await saveProject({ ...form, progress: Number(form.progress), id: editing?.id });
+      const saved = await saveProject({ ...form, drive_folder_id: form.drive_folder_id || drive?.id || '', progress: Number(form.progress), id: editing?.id });
       if (!editing) {
         const questionsToCreate = initialQuestions.filter((question) => question.label.trim());
         await Promise.all(questionsToCreate.map((question) => addProjectQuestion({
           projectId: saved.id,
           question: question.label,
           type: question.type,
-          options: question.type === 'dropdown' ? question.options : [],
+          options: ['dropdown', 'multiple_choice'].includes(question.type) ? question.options : [],
         })));
       }
       toast.success(editing ? 'Project updated' : 'Project created');
@@ -115,9 +124,19 @@ export default function ManageProjects() {
                 <h3 className="text-2xl font-black">{project.name}</h3>
                 <p className="mt-2 text-sm leading-6 text-white/48">{project.description}</p>
               </div>
-              <span className="rounded-full border border-violet/20 bg-violet/10 px-3 py-1 text-xs font-black text-violet">{project.status}</span>
+              <StatusBadge status={project.status} />
             </div>
             <ProgressBar value={project.progress} />
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-white/36">Drive folder</p>
+                <p className="mt-1 truncate text-sm font-bold text-white/70">{project.drive_folder_url ? 'Attached' : 'Not attached'}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-white/36">Deadline</p>
+                <p className="mt-1 text-sm font-bold text-white/70">{project.deadline || 'Not set'}</p>
+              </div>
+            </div>
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
               <span className="text-xs font-bold text-white/42">Updated {formatDate(project.updated_at)}</span>
               <div className="flex gap-2">
@@ -132,6 +151,7 @@ export default function ManageProjects() {
               </div>
             </div>
             <div className="mt-4">
+              <p className="mb-2 text-xs font-bold text-white/38">Lightweight PDFs, invoices, and thumbnails only. Heavy assets belong in Google Drive.</p>
               <UploadDropzone projectId={project.id} userId={user.id} compact />
             </div>
           </article>
@@ -147,10 +167,18 @@ export default function ManageProjects() {
           </select>
           <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })} className="focus-ring w-full rounded-2xl border border-white/10 bg-night px-4 py-3 text-white">
             <option>Discovery</option>
-            <option>In Progress</option>
+            <option>Wireframing</option>
+            <option>Design</option>
+            <option>Development</option>
             <option>Review</option>
-            <option>Complete</option>
+            <option>Delivered</option>
           </select>
+          <input value={form.deadline || ''} onChange={(event) => setForm({ ...form, deadline: event.target.value })} type="date" className="focus-ring w-full rounded-2xl border border-white/10 bg-night px-4 py-3 text-white" />
+          <input value={form.drive_folder_url || ''} onChange={(event) => {
+            const drive = parseGoogleDriveLink(event.target.value);
+            setForm({ ...form, drive_folder_url: event.target.value, drive_folder_id: drive?.type === 'folder' ? drive.id : form.drive_folder_id });
+          }} placeholder="Google Drive folder URL" className="focus-ring w-full rounded-2xl border border-white/10 bg-white/[0.055] px-4 py-3 text-white placeholder:text-white/35" />
+          <input value={form.drive_folder_id || ''} onChange={(event) => setForm({ ...form, drive_folder_id: event.target.value })} placeholder="Google Drive folder ID" className="focus-ring w-full rounded-2xl border border-white/10 bg-white/[0.055] px-4 py-3 text-white placeholder:text-white/35" />
           <label className="block text-sm font-bold text-white/60">
             Progress: {form.progress}%
             <input type="range" min="0" max="100" value={form.progress} onChange={(event) => setForm({ ...form, progress: event.target.value })} className="mt-3 w-full accent-cyan-300" />
@@ -170,9 +198,10 @@ export default function ManageProjects() {
                       <option value="text">Text</option>
                       <option value="textarea">Textarea</option>
                       <option value="dropdown">Dropdown</option>
-                      <option value="file">File upload</option>
+                      <option value="multiple_choice">Multiple choice</option>
+                      <option value="file">File reference/link</option>
                     </select>
-                    <input value={(question.options || []).join(', ')} onChange={(event) => updateQuestion(index, { options: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) })} disabled={question.type !== 'dropdown'} placeholder="Dropdown options" className="focus-ring rounded-xl border border-white/10 bg-night px-3 py-2 text-sm text-white disabled:opacity-35" />
+                    <input value={(question.options || []).join(', ')} onChange={(event) => updateQuestion(index, { options: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) })} disabled={!['dropdown', 'multiple_choice'].includes(question.type)} placeholder="Options" className="focus-ring rounded-xl border border-white/10 bg-night px-3 py-2 text-sm text-white disabled:opacity-35" />
                     <button type="button" onClick={() => setInitialQuestions((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="grid h-10 w-10 place-items-center rounded-xl border border-ember/20 bg-ember/10 text-ember">
                       <Trash2 className="h-4 w-4" />
                     </button>

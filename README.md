@@ -12,7 +12,7 @@ npm install
 
 2. Copy `.env.example` to `.env` and add your Supabase project values.
 
-3. Run the SQL in `supabase/schema.sql` inside the Supabase SQL editor.
+3. Run the SQL in `supabase/schema.sql` inside the Supabase SQL editor, or apply the migrations in `supabase/migrations`.
 
 4. Start the app:
 
@@ -36,3 +36,5 @@ Deploy the client creation function:
 ```bash
 supabase functions deploy create-client
 ```
+
+The portal uses hybrid storage by design: Supabase stores auth, relational data, chat, invoices, PDFs, and lightweight previews; Google Drive stores raw assets, reels, videos, PSDs, and other heavy project files through each project's Drive folder URL and ID.

@@ -1,5 +1,6 @@
 import { FolderKanban, LayoutDashboard, MessageSquare, Shield, Users, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 
 const clientLinks = [
@@ -16,6 +17,14 @@ const adminLinks = [
 
 export default function MobileDrawer({ admin, open, onClose }) {
   const links = admin ? adminLinks : clientLinks;
+  useEffect(() => {
+    if (!open) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [open]);
   return (
     <AnimatePresence>
       {open && (

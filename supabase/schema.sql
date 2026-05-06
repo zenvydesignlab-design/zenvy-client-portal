@@ -4,6 +4,7 @@ create table if not exists public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
   role text not null default 'client' check (role in ('admin', 'client')),
+  status text not null default 'active' check (status in ('active', 'inactive')),
   created_at timestamptz not null default now()
 );
 
@@ -14,6 +15,9 @@ create table if not exists public.projects (
   status text not null default 'Discovery',
   progress integer not null default 0 check (progress between 0 and 100),
   description text,
+  deadline date,
+  drive_folder_url text,
+  drive_folder_id text,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
@@ -40,10 +44,85 @@ create table if not exists public.questions (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
   question text not null,
-  type text not null default 'textarea' check (type in ('text', 'textarea', 'file')),
+  type text not null default 'textarea' check (type in ('text', 'textarea', 'dropdown', 'multiple_choice', 'file')),
+  options jsonb not null default '[]'::jsonb,
   created_by uuid references public.users(id) on delete set null default auth.uid(),
   created_at timestamptz not null default now()
 );
+
+create table if not exists public.invoices (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  created_by uuid references public.users(id) on delete set null default auth.uid(),
+  invoice_number text not null,
+  title text not null,
+  amount numeric(12,2) not null default 0,
+  status text not null default 'pending' check (status in ('paid', 'pending', 'overdue')),
+  due_date date,
+  pdf_url text,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.contracts (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  title text not null,
+  contract_url text not null,
+  created_by uuid references public.users(id) on delete set null default auth.uid(),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.meetings (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  title text not null default 'Project call',
+  starts_at timestamptz,
+  meeting_url text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.approvals (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  title text not null,
+  description text,
+  asset_url text,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'revision_requested')),
+  feedback text,
+  responded_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.users(id) on delete cascade,
+  audience text check (audience in ('admin', 'client')),
+  title text not null,
+  body text not null,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists invoices_project_id_idx
+on public.invoices (project_id);
+
+create index if not exists invoices_project_status_idx
+on public.invoices (project_id, status);
+
+create index if not exists invoices_due_date_idx
+on public.invoices (due_date);
+
+create index if not exists invoices_created_by_idx
+on public.invoices (created_by);
+
+create index if not exists contracts_project_id_idx
+on public.contracts (project_id);
+
+create index if not exists contracts_created_by_idx
+on public.contracts (created_by);
 
 create table if not exists public.answers (
   id uuid primary key default gen_random_uuid(),
@@ -93,6 +172,11 @@ alter table public.users enable row level security;
 alter table public.projects enable row level security;
 alter table public.messages enable row level security;
 alter table public.files enable row level security;
+alter table public.invoices enable row level security;
+alter table public.contracts enable row level security;
+alter table public.meetings enable row level security;
+alter table public.approvals enable row level security;
+alter table public.notifications enable row level security;
 alter table public.questionnaire_templates enable row level security;
 alter table public.questionnaire_responses enable row level security;
 
@@ -209,6 +293,157 @@ create policy "Admins manage files"
 on public.files for all
 using (public.is_admin())
 with check (public.is_admin());
+
+drop policy if exists "Project participants read invoices" on public.invoices;
+create policy "Project participants read invoices"
+on public.invoices for select
+using (
+  public.is_admin()
+  or exists (
+    select 1 from public.projects
+    where projects.id = invoices.project_id
+    and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins manage invoices" on public.invoices;
+drop policy if exists "Admins insert invoices" on public.invoices;
+create policy "Admins insert invoices"
+on public.invoices for insert
+with check (
+  public.is_admin()
+  and (created_by is null or created_by = auth.uid())
+);
+
+drop policy if exists "Admins update invoices" on public.invoices;
+create policy "Admins update invoices"
+on public.invoices for update
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "Admins delete invoices" on public.invoices;
+create policy "Admins delete invoices"
+on public.invoices for delete
+using (public.is_admin());
+
+drop policy if exists "Project participants read contracts" on public.contracts;
+create policy "Project participants read contracts"
+on public.contracts for select
+using (
+  public.is_admin()
+  or exists (
+    select 1
+    from public.projects
+    where projects.id = contracts.project_id
+    and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins insert contracts" on public.contracts;
+create policy "Admins insert contracts"
+on public.contracts for insert
+with check (
+  public.is_admin()
+  and (created_by is null or created_by = auth.uid())
+);
+
+drop policy if exists "Admins update contracts" on public.contracts;
+create policy "Admins update contracts"
+on public.contracts for update
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "Admins delete contracts" on public.contracts;
+create policy "Admins delete contracts"
+on public.contracts for delete
+using (public.is_admin());
+
+drop policy if exists "Project participants read meetings" on public.meetings;
+create policy "Project participants read meetings"
+on public.meetings for select
+using (
+  public.is_admin()
+  or exists (
+    select 1 from public.projects
+    where projects.id = meetings.project_id
+    and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins manage meetings" on public.meetings;
+create policy "Admins manage meetings"
+on public.meetings for all
+using (public.is_admin())
+with check (public.is_admin());
+
+drop policy if exists "Project participants read approvals" on public.approvals;
+create policy "Project participants read approvals"
+on public.approvals for select
+using (
+  public.is_admin()
+  or exists (
+    select 1 from public.projects
+    where projects.id = approvals.project_id
+    and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins create approvals" on public.approvals;
+create policy "Admins create approvals"
+on public.approvals for insert
+with check (public.is_admin());
+
+drop policy if exists "Project participants update approvals" on public.approvals;
+create policy "Project participants update approvals"
+on public.approvals for update
+using (
+  public.is_admin()
+  or exists (
+    select 1 from public.projects
+    where projects.id = approvals.project_id
+    and projects.client_id = auth.uid()
+  )
+)
+with check (
+  public.is_admin()
+  or exists (
+    select 1 from public.projects
+    where projects.id = approvals.project_id
+    and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins delete questions" on public.questions;
+create policy "Admins delete questions"
+on public.questions for delete
+using (public.is_admin());
+
+drop policy if exists "Users read assigned notifications" on public.notifications;
+create policy "Users read assigned notifications"
+on public.notifications for select
+using (
+  public.is_admin()
+  or user_id = auth.uid()
+  or audience in (
+    select role from public.users where id = auth.uid()
+  )
+);
+
+drop policy if exists "Users update own notifications" on public.notifications;
+create policy "Users update own notifications"
+on public.notifications for update
+using (
+  user_id = auth.uid()
+  or audience in (
+    select role from public.users where id = auth.uid()
+  )
+)
+with check (
+  user_id = auth.uid()
+  or audience in (
+    select role from public.users where id = auth.uid()
+  )
+);
 
 insert into storage.buckets (id, name, public)
 values ('project-files', 'project-files', true)
