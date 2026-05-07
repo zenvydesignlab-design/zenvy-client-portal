@@ -40,6 +40,7 @@ root.render(
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/projects/:projectId" element={<Project />} />
                 <Route path="/project/:projectId" element={<Project />} />
+                <Route path="/client/project/:projectId" element={<Project />} />
                 <Route path="/messages" element={<Messages />} />
               </Route>
               <Route
