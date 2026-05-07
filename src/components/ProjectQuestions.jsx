@@ -2,9 +2,11 @@ import { ArrowLeft, ArrowRight, CheckCircle2, MessageSquarePlus, Pencil, Save, S
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { addProjectQuestion, answerProjectQuestion, deleteProjectQuestion, formatDate, getProjectQuestions, updateProjectQuestion } from '../services/api';
+import { useAuth } from '../hooks/useAuth';
 import UploadDropzone from './UploadDropzone';
 
-export default function ProjectQuestions({ projectId, user }) {
+export default function ProjectQuestions({ project, isAdmin = false }) {
+  const { user } = useAuth();
   const [questions, setQuestions] = useState([]);
   const [newQuestion, setNewQuestion] = useState('');
   const [newType, setNewType] = useState('textarea');
@@ -18,12 +20,10 @@ export default function ProjectQuestions({ projectId, user }) {
   const [saving, setSaving] = useState(false);
   const autosaveRef = useRef({});
 
-  const isAdmin = user.role === 'admin';
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getProjectQuestions(projectId);
+      const data = await getProjectQuestions(project.id);
       setQuestions(data);
       setDrafts(Object.fromEntries(data.map((question) => {
         const ownAnswer = question.answers?.find((answer) => answer.user_id === user.id);
@@ -34,7 +34,7 @@ export default function ProjectQuestions({ projectId, user }) {
     } finally {
       setLoading(false);
     }
-  }, [projectId, user.id]);
+  }, [project.id, user.id]);
 
   useEffect(() => {
     load();
@@ -53,7 +53,7 @@ export default function ProjectQuestions({ projectId, user }) {
     setSaving(true);
     try {
       await addProjectQuestion({
-        projectId,
+        projectId: project.id,
         question: newQuestion,
         type: newType,
         options: ['dropdown', 'multiple_choice'].includes(newType) ? newOptions.split(',').map((option) => option.trim()).filter(Boolean) : [],
@@ -295,7 +295,7 @@ export default function ProjectQuestions({ projectId, user }) {
                 <div className="mt-4">
                   {question.type === 'file' ? (
                     <div className="space-y-3">
-                      <UploadDropzone projectId={projectId} userId={user.id} compact onUploaded={(uploaded) => handleFileAnswer(question.id, uploaded)} />
+                      <UploadDropzone projectId={project.id} userId={user.id} compact onUploaded={(uploaded) => handleFileAnswer(question.id, uploaded)} />
                       {drafts[question.id] && (
                         <p className="rounded-2xl border border-aqua/15 bg-aqua/[0.06] p-3 text-sm leading-6 text-white/78">
                           {drafts[question.id]}

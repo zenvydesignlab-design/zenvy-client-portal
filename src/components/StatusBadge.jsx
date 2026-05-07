@@ -10,7 +10,7 @@ const styles = {
 
 export default function StatusBadge({ status }) {
   return (
-    <span className={`inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-black ${styles[status] || 'border-white/10 bg-white/10 text-white/70'}`}>
+    <span className={`inline-flex items-center rounded-md border px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest ${styles[status] || 'border-white/10 bg-white/5 text-white/50'}`}>
       {status || 'Discovery'}
     </span>
   );

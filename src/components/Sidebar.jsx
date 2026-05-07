@@ -1,8 +1,9 @@
-import { LayoutDashboard, MessageSquare, FolderKanban, Users, Shield, LogOut, Sparkles } from 'lucide-react';
-import { memo } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { LayoutDashboard, MessageSquare, FolderKanban, Users, Shield, LogOut, Sparkles, ChevronDown } from 'lucide-react';
+import { memo, useState, useEffect } from 'react';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../hooks/useAuth';
+import { getProjects } from '../services/api';
 
 const clientLinks = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -18,8 +19,19 @@ const adminLinks = [
 
 function Sidebar({ admin }) {
   const links = admin ? adminLinks : clientLinks;
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [projects, setProjects] = useState([]);
+  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      getProjects(user).then(setProjects).catch(() => {});
+    }
+  }, [user]);
+
+  const activeProject = projects.find(p => location.pathname.includes(`/projects/${p.id}`));
 
   const handleSignOut = async () => {
     await signOut();
@@ -27,59 +39,95 @@ function Sidebar({ admin }) {
   };
 
   return (
-    <aside className="sticky top-0 hidden h-screen w-72 shrink-0 p-4 lg:block">
-      <div className="glass-strong flex h-full flex-col rounded-[1.75rem] p-4">
-        <div className="mb-8 flex items-center gap-3 px-2 pt-2">
-          <div className="grid h-12 w-12 place-items-center rounded-full bg-white text-xl font-black text-night">Z</div>
-          <div>
-            <p className="text-xl font-black tracking-[0.16em]">ZENVY</p>
-            <p className="text-xs font-bold tracking-[0.38em] text-white/45">PORTAL</p>
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 border-r border-white/5 bg-night p-4 lg:block">
+      <div className="flex h-full flex-col">
+        <div className="mb-8 flex items-center gap-2.5 px-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-night">
+            <span className="text-lg font-black tracking-tighter">Z</span>
           </div>
+          <span className="text-sm font-bold tracking-tight text-white">Zenvy Portal</span>
         </div>
 
-        <nav className="space-y-2">
+        {/* Project Switcher */}
+        {projects.length > 0 && (
+          <div className="relative mb-6 px-1">
+            <button
+              onClick={() => setProjectSwitcherOpen(!projectSwitcherOpen)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-left transition-all hover:bg-white/[0.05]"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-white">
+                  {activeProject ? activeProject.name : 'Select Project'}
+                </p>
+              </div>
+              <ChevronDown className={`h-3.5 w-3.5 text-slate-500 transition-transform ${projectSwitcherOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            <AnimatePresence>
+              {projectSwitcherOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 4 }}
+                  className="absolute left-1 right-1 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-xl border border-white/10 bg-night-light p-1.5 shadow-2xl backdrop-blur-xl"
+                >
+                  {projects.map((project) => (
+                    <button
+                      key={project.id}
+                      onClick={() => {
+                        navigate(admin ? `/admin/projects/${project.id}` : `/projects/${project.id}`);
+                        setProjectSwitcherOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs transition-all hover:bg-white/5 hover:text-white text-slate-400"
+                    >
+                      <div className="h-1.5 w-1.5 rounded-full bg-aqua" />
+                      <span className="truncate">{project.name}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
+        <nav className="flex-1 space-y-0.5 px-1">
           {links.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
               className={({ isActive }) =>
-                `group relative flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-bold transition ${
-                  isActive ? 'text-night' : 'text-white/62 hover:text-white'
+                `group flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium transition-all ${
+                  isActive 
+                    ? 'bg-white/10 text-white' 
+                    : 'text-slate-400 hover:bg-white/5 hover:text-white'
                 }`
               }
             >
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <motion.span
-                      layoutId="sidebar-active"
-                      className="absolute inset-0 rounded-2xl bg-white shadow-glow"
-                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                    />
-                  )}
-                  <Icon className="relative h-5 w-5" />
-                  <span className="relative">{label}</span>
-                </>
-              )}
+              <Icon className="h-4 w-4" />
+              <span>{label}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className="mt-auto rounded-3xl border border-aqua/15 bg-aqua/5 p-4">
-          <Sparkles className="mb-3 h-5 w-5 text-aqua" />
-          <p className="text-sm font-bold">Premium delivery space</p>
-          <p className="mt-1 text-xs leading-5 text-white/48">Projects, files, approvals, and conversations in one polished portal.</p>
-        </div>
+        <div className="mt-auto space-y-4 px-1">
+          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-violet" />
+              <p className="text-[11px] font-bold text-white">Premium</p>
+            </div>
+            <p className="text-[10px] leading-relaxed text-slate-500">Full access to project tools and shared assets.</p>
+          </div>
 
-        <button
-          type="button"
-          onClick={handleSignOut}
-          className="focus-ring mt-3 flex items-center justify-center gap-2 rounded-2xl border border-white/10 px-4 py-3 text-sm font-bold text-white/70 transition hover:border-ember/40 hover:bg-ember/10 hover:text-white"
-        >
-          <LogOut className="h-4 w-4" />
-          Sign out
-        </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-slate-400 transition-all hover:bg-red-500/10 hover:text-red-400"
+          >
+            <LogOut className="h-4 w-4" />
+            <span>Sign out</span>
+          </button>
+        </div>
       </div>
     </aside>
   );

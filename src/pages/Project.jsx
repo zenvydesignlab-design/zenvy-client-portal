@@ -1,13 +1,9 @@
-import { CalendarDays, Download, FileText, Target } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { CalendarDays, CheckCircle2, Clock3, Download, FileText, FolderOpen, Sparkles, Target } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import ActivityTimeline from '../components/ActivityTimeline';
-import ApprovalPanel from '../components/ApprovalPanel';
 import ChatBox from '../components/ChatBox';
-import ContractPanel from '../components/ContractPanel';
 import EmptyState from '../components/EmptyState';
-import InvoicePanel from '../components/InvoicePanel';
 import Loader from '../components/Loader';
 import MeetingPanel from '../components/MeetingPanel';
 import ProgressBar from '../components/ProgressBar';
@@ -18,7 +14,32 @@ import UploadDropzone from '../components/UploadDropzone';
 import { formatDate, getApprovals, getContracts, getFiles, getInvoices, getMeetings, getMessages, getProject } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 
+const ApprovalPanel = lazy(() => import('../components/ApprovalPanel'));
+const ContractPanel = lazy(() => import('../components/ContractPanel'));
+const InvoicePanel = lazy(() => import('../components/InvoicePanel'));
+
 const phases = ['Discovery', 'Wireframing', 'Design', 'Development', 'Review', 'Delivered'];
+
+function PanelFallback({ label = 'Loading section' }) {
+  return (
+    <div className="surface grid min-h-48 place-items-center rounded-3xl p-6 text-sm font-bold text-white/45">
+      {label}
+    </div>
+  );
+}
+
+function KpiCard({ icon: Icon, label, value, tone = 'aqua' }) {
+  const toneClass = tone === 'violet' ? 'text-violet' : tone === 'ember' ? 'text-ember' : 'text-aqua';
+  return (
+    <div className="surface rounded-2xl p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="metric-label">{label}</p>
+        <Icon className={`h-4 w-4 ${toneClass}`} />
+      </div>
+      <p className="mt-3 truncate text-sm font-black text-white">{value}</p>
+    </div>
+  );
+}
 
 export default function Project() {
   const { projectId } = useParams();
@@ -32,7 +53,7 @@ export default function Project() {
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const isAdmin = user.role === 'admin';
+  const isAdmin = user?.role === 'admin';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,119 +86,183 @@ export default function Project() {
     load();
   }, [load]);
 
+  const projectMeta = useMemo(() => {
+    if (!project) return null;
+    const currentPhaseIndex = Math.max(0, phases.indexOf(project.status));
+    const nextPhase = phases[Math.min(phases.length - 1, currentPhaseIndex + 1)];
+    const deadline = project.deadline || project.due_date;
+    const deliverables = [
+      { label: 'Creative direction', active: currentPhaseIndex >= 1, detail: 'Strategy and visual references aligned' },
+      { label: 'Design review pack', active: currentPhaseIndex >= 2, detail: 'Core screens and feedback loop' },
+      { label: 'Responsive build', active: currentPhaseIndex >= 3, detail: 'Implementation, QA, and handoff' },
+      { label: 'Launch handoff', active: currentPhaseIndex >= 5, detail: 'Final files and post-launch guidance' },
+    ];
+
+    const timeline = [
+      ...files.slice(0, 4).map((file) => ({ id: `file-${file.id}`, title: `${file.name || 'File'} uploaded`, detail: 'Portal file', date: file.uploaded_at, kind: 'upload' })),
+      ...messages.slice(-4).map((message) => ({ id: `message-${message.id}`, title: message.text, detail: `${message.sender} message`, date: message.created_at, kind: 'message' })),
+      ...approvals.slice(0, 4).map((approval) => ({ id: `approval-${approval.id}`, title: approval.title, detail: approval.status, date: approval.created_at, kind: 'approval' })),
+      { id: 'status', title: `${project.status} phase confirmed`, detail: `${project.progress}% complete`, date: project.updated_at, kind: 'status' },
+    ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0)).slice(0, 8);
+
+    return { currentPhaseIndex, nextPhase, deadline, deliverables, timeline };
+  }, [approvals, files, messages, project]);
+
   if (loading) return <Loader label="Opening project room" />;
   if (error) return <EmptyState title="Project could not load" text={error} />;
-  if (!project) return <EmptyState title="Project unavailable" text="This project either does not exist or is not assigned to your account." />;
-
-  const timeline = [
-    ...files.slice(0, 3).map((file) => ({ id: `file-${file.id}`, title: `${file.name || 'File'} uploaded`, detail: 'Lightweight portal file', date: file.uploaded_at, kind: 'upload' })),
-    ...messages.slice(-3).map((message) => ({ id: `message-${message.id}`, title: message.text, detail: `${message.sender} message`, date: message.created_at, kind: 'message' })),
-    ...approvals.slice(0, 3).map((approval) => ({ id: `approval-${approval.id}`, title: approval.title, detail: approval.status, date: approval.created_at, kind: 'approval' })),
-    { id: 'status', title: `${project.status} phase confirmed`, detail: `${project.progress}% complete`, date: project.updated_at, kind: 'status' },
-  ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 8);
-  const currentPhaseIndex = Math.max(0, phases.indexOf(project.status));
-  const nextPhase = phases[Math.min(phases.length - 1, currentPhaseIndex + 1)];
-  const deadline = project.deadline || project.due_date;
-
-  const deliverables = [
-    { label: 'Creative direction', active: currentPhaseIndex >= 1 },
-    { label: 'Design review pack', active: currentPhaseIndex >= 2 },
-    { label: 'Responsive build', active: currentPhaseIndex >= 3 },
-    { label: 'Launch handoff', active: currentPhaseIndex >= 5 },
-  ];
+  if (!project || !projectMeta) return <EmptyState title="Project unavailable" text="This project either does not exist or is not assigned to your account." />;
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid gap-6 xl:grid-cols-[1fr_26rem]">
-      <div className="space-y-6">
-        <section className="glass rounded-[2rem] p-6 sm:p-8">
-          <div className="mb-8 flex flex-wrap items-start justify-between gap-5">
-            <div>
-              <p className="text-sm font-black uppercase tracking-[0.28em] text-aqua/75">Project overview</p>
-              <h2 className="mt-3 text-4xl font-black tracking-tight">{project.name}</h2>
-              <p className="mt-4 max-w-3xl text-base leading-7 text-white/54">{project.description}</p>
-            </div>
-            <StatusBadge status={project.status} />
+    <div className="space-y-8">
+      <header className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between border-b border-white/5 pb-8">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="h-1.5 w-1.5 rounded-full bg-aqua" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Project Workspace</p>
           </div>
-          <ProgressBar value={project.progress} />
-          <div className="mt-7 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-              <Target className="mb-3 h-5 w-5 text-aqua" />
-              <p className="text-sm font-black">Current phase</p>
-              <p className="mt-1 text-xs text-white/45">{project.status}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-              <CalendarDays className="mb-3 h-5 w-5 text-violet" />
-              <p className="text-sm font-black">Deadline</p>
-              <p className="mt-1 text-xs text-white/45">{deadline ? formatDate(deadline) : 'To be confirmed'}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-              <Target className="mb-3 h-5 w-5 text-ember" />
-              <p className="text-sm font-black">Next milestone</p>
-              <p className="mt-1 text-xs text-white/45">{nextPhase}</p>
-            </div>
+          <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">{project.name}</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">{project.description}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <StatusBadge status={project.status} />
+          <div className="hidden sm:block h-8 w-[1px] bg-white/10" />
+          <div className="flex flex-col">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Deadline</p>
+            <p className="text-sm font-semibold text-white">{projectMeta.deadline ? formatDate(projectMeta.deadline) : 'TBD'}</p>
           </div>
-          <div className="mt-7 grid gap-2 sm:grid-cols-6">
-            {phases.map((phase, index) => (
-              <div key={phase} className={`rounded-2xl border px-3 py-3 text-center text-[11px] font-black ${index <= currentPhaseIndex ? 'border-aqua/25 bg-aqua/10 text-aqua' : 'border-white/10 bg-white/[0.035] text-white/35'}`}>
-                {phase}
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
+        {/* Left Sidebar: Progress & Milestones */}
+        <aside className="space-y-8 xl:col-span-3">
+          <section className="rounded-2xl border border-white/5 bg-white/[0.01] p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-white">Progress</h3>
+              <span className="text-xs font-bold text-aqua">{project.progress}%</span>
+            </div>
+            <ProgressBar value={project.progress} />
+            <div className="mt-6 flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet/10 text-violet">
+                <Target className="h-4 w-4" />
               </div>
-            ))}
-          </div>
-        </section>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Next Phase</p>
+                <p className="truncate text-xs font-semibold text-white">{projectMeta.nextPhase}</p>
+              </div>
+            </div>
+          </section>
 
-        <section className="grid gap-6 lg:grid-cols-2">
-          <ProjectAssetsHub project={project} isAdmin={isAdmin} onChanged={load} />
-          <div className="glass rounded-3xl p-5">
-            <div className="mb-5 flex items-center gap-3">
-              <FileText className="h-5 w-5 text-aqua" />
-              <h3 className="text-xl font-black">Portal files</h3>
+          <section className="rounded-2xl border border-white/5 bg-white/[0.01] p-6">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-white mb-5">Milestones</h3>
+            <div className="space-y-1.5">
+              {phases.map((phase, index) => {
+                const active = index <= projectMeta.currentPhaseIndex;
+                const isCurrent = index === projectMeta.currentPhaseIndex;
+                return (
+                  <div key={phase} className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-all ${isCurrent ? 'bg-white/5 border border-white/10' : 'border border-transparent'}`}>
+                    <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[10px] font-bold ${active ? 'bg-aqua text-night' : 'bg-white/5 text-slate-500'}`}>
+                      {active ? <CheckCircle2 className="h-3 w-3" /> : index + 1}
+                    </div>
+                    <span className={`text-xs font-medium ${active ? 'text-white' : 'text-slate-500'}`}>{phase}</span>
+                  </div>
+                );
+              })}
             </div>
-            <div className="space-y-3">
-              <UploadDropzone projectId={project.id} userId={user.id} onUploaded={load} compact />
-              {files.length === 0 ? (
-                <p className="text-sm text-white/45">No files uploaded yet.</p>
-              ) : (
-                files.map((file) => (
-                  <a key={file.id} href={file.file_url} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition hover:border-aqua/30">
-                    <span>
-                      <span className="block text-sm font-bold">{file.name || file.file_url.split('/').pop()}</span>
-                      <span className="text-xs text-white/40">{formatDate(file.uploaded_at)}</span>
-                    </span>
-                    <Download className="h-5 w-5 text-white/55" />
-                  </a>
-                ))
-              )}
-            </div>
-          </div>
+          </section>
 
-          <div className="glass rounded-3xl p-5">
-            <div className="mb-5 flex items-center gap-3">
-              <Target className="h-5 w-5 text-violet" />
-              <h3 className="text-xl font-black">Upcoming deliverables</h3>
-            </div>
-            <div className="space-y-3">
-              {deliverables.map((item) => (
-                <div key={item.label} className={`rounded-2xl border p-4 ${item.active ? 'border-aqua/20 bg-aqua/[0.06]' : 'border-white/10 bg-white/[0.035]'}`}>
-                  <p className="text-sm font-black">{item.label}</p>
-                  <p className="mt-1 text-xs text-white/42">{item.active ? 'In motion or completed' : 'Queued for the next phase'}</p>
+          <section className="rounded-2xl border border-white/5 bg-white/[0.01] p-6">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-white mb-5">Deliverables</h3>
+            <div className="grid gap-3">
+              {projectMeta.deliverables.map((item) => (
+                <div key={item.label} className={`rounded-xl border p-4 transition-all bg-white/[0.01] ${item.active ? 'border-white/10' : 'border-white/5 opacity-60'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{item.label}</p>
+                      <p className="mt-1 text-[10px] leading-relaxed text-slate-500 line-clamp-2">{item.detail}</p>
+                    </div>
+                    {item.active && <div className="mt-1 h-1.5 w-1.5 rounded-full bg-aqua shadow-glow shrink-0" />}
+                  </div>
                 </div>
               ))}
             </div>
+          </section>
+        </aside>
+
+        {/* Main Content Area */}
+        <main className="min-w-0 space-y-8 xl:col-span-6">
+          <ProjectAssetsHub project={project} files={files} isAdmin={isAdmin} onChanged={load} />
+
+          <section className="rounded-2xl border border-white/5 bg-white/[0.01] p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-aqua" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-widest">Portal Files</h3>
+              </div>
+              <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">{files.length} items</span>
+            </div>
+            
+            <div className="space-y-6">
+              <UploadDropzone projectId={project.id} userId={user.id} onUploaded={load} compact />
+              <div className="grid gap-2">
+                {files.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 border border-dashed border-white/10 rounded-xl bg-white/[0.01]">
+                    <p className="text-xs text-slate-600">No portal files yet.</p>
+                  </div>
+                ) : (
+                  files.slice(0, 5).map((file) => (
+                    <a key={file.id} href={file.file_url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-4 rounded-xl border border-white/5 bg-white/[0.01] p-3 transition-all hover:border-white/10 hover:bg-white/[0.03]">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-8 w-8 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
+                          <FileText className="h-3.5 w-3.5 text-slate-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold text-white">{file.name || 'Untitled File'}</p>
+                          <p className="text-[10px] text-slate-600">{formatDate(file.uploaded_at)}</p>
+                        </div>
+                      </div>
+                      <Download className="h-4 w-4 text-slate-500 hover:text-white transition-colors" />
+                    </a>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+
+          <ProjectQuestions project={project} isAdmin={isAdmin} />
+
+          <div className="space-y-8">
+            <Suspense fallback={<PanelFallback label="Loading invoices" />}>
+              <InvoicePanel project={project} invoices={invoices} isAdmin={isAdmin} onChanged={load} />
+            </Suspense>
+
+            <Suspense fallback={<PanelFallback label="Loading contracts" />}>
+              <ContractPanel project={project} contracts={contracts} isAdmin={isAdmin} onChanged={load} />
+            </Suspense>
           </div>
-          <div className="glass rounded-3xl p-5">
-            <h3 className="mb-5 text-xl font-black">Activity timeline</h3>
-            <ActivityTimeline items={timeline} compact />
+        </main>
+
+        {/* Right Sidebar: Activity & Communication */}
+        <aside className="space-y-8 xl:col-span-3">
+          <div className="sticky top-24 space-y-8">
+            <ChatBox projectId={project.id} messages={messages} onSent={load} compact />
+            
+            <section className="rounded-2xl border border-white/5 bg-white/[0.01] p-6">
+              <div className="flex items-center gap-2 mb-6">
+                <Clock3 className="h-4 w-4 text-violet" />
+                <h3 className="text-[10px] font-bold text-white uppercase tracking-widest">Recent Activity</h3>
+              </div>
+              <ActivityTimeline items={projectMeta.timeline} compact />
+            </section>
+
+            <Suspense fallback={<PanelFallback label="Loading approvals" />}>
+              <ApprovalPanel project={project} approvals={approvals} isAdmin={isAdmin} onChanged={load} />
+            </Suspense>
+
+            <MeetingPanel project={project} meetings={meetings} isAdmin={isAdmin} onChanged={load} />
           </div>
-        </section>
-        <ProjectQuestions projectId={project.id} user={user} />
-        <section className="grid gap-6 lg:grid-cols-2">
-          <ApprovalPanel projectId={project.id} approvals={approvals} isAdmin={isAdmin} onChanged={load} />
-          <InvoicePanel projectId={project.id} invoices={invoices} isAdmin={isAdmin} onChanged={load} />
-          <ContractPanel projectId={project.id} contracts={contracts} isAdmin={isAdmin} onChanged={load} />
-          <MeetingPanel projectId={project.id} meetings={meetings} isAdmin={isAdmin} onChanged={load} />
-        </section>
+        </aside>
       </div>
-      <ChatBox projectId={project.id} messages={messages} onSent={load} />
-    </motion.div>
+    </div>
   );
 }

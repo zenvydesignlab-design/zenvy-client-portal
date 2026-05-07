@@ -40,30 +40,36 @@ export default function AdminDashboard() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      <section className="glass rounded-[2rem] p-6 sm:p-8">
-        <p className="text-sm font-black uppercase tracking-[0.28em] text-aqua/75">Owner overview</p>
-        <h2 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">A calm control panel for every client delivery.</h2>
-        <p className="mt-4 max-w-3xl text-base leading-7 text-white/54">Manage assignments, progress, files, and conversations from one focused workspace.</p>
+      <section className="glass rounded-3xl p-8">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="h-2 w-2 rounded-full bg-aqua animate-pulse" />
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Command Center</p>
+        </div>
+        <h2 className="text-4xl font-bold tracking-tight text-white max-w-2xl leading-tight">A calm control panel for every client delivery.</h2>
+        <p className="mt-4 max-w-xl text-sm leading-relaxed text-slate-500">Manage assignments, progress, files, and conversations from one focused workspace.</p>
       </section>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <StatCard icon={Users} label="Clients" value={clients.length} />
-        <StatCard icon={FolderKanban} label="Projects" value={projects.length} tone="violet" />
-        <StatCard icon={MessageSquare} label="Messages" value={messages.length} tone="ember" />
-        <StatCard icon={Activity} label="Avg progress" value={`${projects.length ? Math.round(projects.reduce((sum, item) => sum + Number(item.progress), 0) / projects.length) : 0}%`} />
+        <StatCard icon={Users} label="Total Clients" value={clients.length} />
+        <StatCard icon={FolderKanban} label="Active Projects" value={projects.length} tone="violet" />
+        <StatCard icon={MessageSquare} label="All Messages" value={messages.length} tone="ember" />
+        <StatCard icon={Activity} label="Avg Progress" value={`${projects.length ? Math.round(projects.reduce((sum, item) => sum + Number(item.progress), 0) / projects.length) : 0}%`} />
       </div>
 
       {activity.length ? (
-        <section className="glass rounded-3xl p-5">
-          <h3 className="mb-5 text-xl font-black">Recent activity</h3>
-          <div className="space-y-3">
+        <section className="glass rounded-3xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-lg font-bold text-white">Recent activity</h3>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Last 6 events</span>
+          </div>
+          <div className="space-y-2">
             {activity.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+              <div key={item.id} className="group flex items-center justify-between gap-4 rounded-xl border border-white/5 bg-white/[0.02] p-4 transition-all hover:border-white/10 hover:bg-white/[0.04]">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-bold">{item.title}</p>
-                  <p className="text-xs capitalize text-white/42">{item.detail}</p>
+                  <p className="truncate text-sm font-semibold text-white group-hover:text-aqua transition-colors">{item.title}</p>
+                  <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.detail}</p>
                 </div>
-                <span className="shrink-0 text-xs font-bold text-white/42">{formatDate(item.date)}</span>
+                <span className="shrink-0 text-[10px] font-bold text-slate-500 uppercase tracking-widest">{formatDate(item.date)}</span>
               </div>
             ))}
           </div>

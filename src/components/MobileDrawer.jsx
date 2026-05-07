@@ -29,37 +29,47 @@ export default function MobileDrawer({ admin, open, onClose }) {
     <AnimatePresence>
       {open && (
         <motion.div className="fixed inset-0 z-50 lg:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-          <button type="button" aria-label="Close menu overlay" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+          <button type="button" aria-label="Close menu overlay" className="absolute inset-0 bg-night/80 backdrop-blur-md" onClick={onClose} />
           <motion.aside
             initial={{ x: '-100%' }}
             animate={{ x: 0 }}
             exit={{ x: '-100%' }}
-            transition={{ type: 'spring', stiffness: 360, damping: 34 }}
-            className="glass-strong relative h-full w-[84vw] max-w-sm rounded-r-[2rem] p-5"
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="glass relative h-full w-[80vw] max-w-sm rounded-r-3xl p-6"
           >
-            <div className="mb-8 flex items-center justify-between">
+            <div className="mb-10 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-full bg-white font-black text-night">Z</div>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-aqua to-violet shadow-glow">
+                  <span className="text-xl font-black text-white">Z</span>
+                </div>
                 <div>
-                  <p className="text-lg font-black tracking-[0.16em]">ZENVY</p>
-                  <p className="text-xs font-bold tracking-[0.32em] text-white/45">PORTAL</p>
+                  <p className="text-lg font-black tracking-tighter text-white">ZENVY</p>
+                  <p className="text-[10px] font-bold tracking-[0.4em] text-slate-500 uppercase">Studio</p>
                 </div>
               </div>
-              <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5">
+              <button type="button" onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/5 bg-white/5 text-slate-400">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav className="space-y-2">
+            <nav className="space-y-1">
               {links.map(({ to, label, icon: Icon, end }) => (
                 <NavLink
                   key={to}
                   to={to}
                   end={end}
                   onClick={onClose}
-                  className={({ isActive }) => `flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-black transition ${isActive ? 'bg-white text-night' : 'bg-white/[0.04] text-white/65'}`}
+                  className={({ isActive }) => 
+                    `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-all ${
+                      isActive ? 'bg-white/10 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                    }`
+                  }
                 >
-                  <Icon className="h-5 w-5" />
-                  {label}
+                  {({ isActive }) => (
+                    <>
+                      <Icon className={`h-5 w-5 ${isActive ? 'text-aqua' : ''}`} />
+                      {label}
+                    </>
+                  )}
                 </NavLink>
               ))}
             </nav>

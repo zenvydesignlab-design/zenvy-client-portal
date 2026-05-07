@@ -23,11 +23,19 @@ export default function Header({ admin = false, onMenuClick }) {
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [recentSearches, setRecentSearches] = useState(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem('zenvy_recent_searches') || '[]');
+    } catch {
+      return [];
+    }
+  });
   const searchRef = useRef(null);
+  const inputRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
   const title = titles[location.pathname] || (location.pathname.includes('/projects') || location.pathname.includes('/project/') ? 'Project Room' : 'Portal');
-  const placeholder = admin ? 'Search projects, clients, invoices, files...' : 'Search your project files, invoices, updates...';
+  const placeholder = admin ? 'Search projects, clients, invoices, contracts, files...' : 'Search files, invoices, contracts, deliverables...';
 
   const handleSignOut = async () => {
     await signOut();
@@ -41,6 +49,18 @@ export default function Header({ admin = false, onMenuClick }) {
     };
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -64,41 +84,73 @@ export default function Header({ admin = false, onMenuClick }) {
   }, [query, user]);
 
   const openResult = (href) => {
+    const trimmed = query.trim();
+    if (trimmed) {
+      const next = [trimmed, ...recentSearches.filter((item) => item !== trimmed)].slice(0, 5);
+      setRecentSearches(next);
+      window.localStorage.setItem('zenvy_recent_searches', JSON.stringify(next));
+    }
     setSearchOpen(false);
     setQuery('');
     navigate(href);
   };
 
+  const handleRecentSearch = (value) => {
+    setQuery(value);
+    setSearchOpen(true);
+    inputRef.current?.focus();
+  };
+
   return (
-    <header className="sticky top-0 z-20 border-b border-white/8 bg-night/45 px-4 py-4 backdrop-blur-2xl sm:px-6 lg:px-8">
-      <div ref={searchRef} className="mx-auto flex max-w-7xl flex-wrap items-center gap-4">
-        <button onClick={onMenuClick} className="focus-ring grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/5 text-white/75 lg:hidden" type="button" aria-label="Open menu">
+    <header className="sticky top-0 z-20 border-b border-white/5 bg-night/86 px-4 py-3 backdrop-blur-md sm:px-6">
+      <div ref={searchRef} className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 md:flex-nowrap md:gap-5">
+        <button onClick={onMenuClick} className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-slate-400 lg:hidden hover:text-white transition-colors" type="button" aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </button>
+        
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold uppercase tracking-[0.28em] text-aqua/70">Zenvy Design Lab</p>
-          <h1 className="truncate text-xl font-black tracking-tight sm:text-3xl">{title}</h1>
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-aqua" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Zenvy Studio</p>
+          </div>
+          <h1 className="mt-1 truncate text-lg font-bold tracking-tight text-white">{title}</h1>
         </div>
-        <div className="relative hidden min-w-[20rem] max-w-[28rem] flex-1 md:block">
-          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-4 py-3 text-sm text-white/70 transition focus-within:border-aqua/35 focus-within:bg-white/[0.065]">
-            <Search className="h-4 w-4 shrink-0 text-white/45" />
+
+        <div className="relative hidden min-w-[24rem] max-w-[32rem] flex-1 md:block">
+          <div className="group flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2 text-sm text-slate-400 transition-all focus-within:border-aqua/50 focus-within:bg-white/[0.04]">
+            <Search className="h-4 w-4 shrink-0 transition-colors group-focus-within:text-aqua" />
             <input
               value={query}
+              ref={inputRef}
               onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }}
               onFocus={() => setSearchOpen(true)}
               placeholder={placeholder}
-              className="min-w-0 flex-1 bg-transparent text-sm font-bold text-white outline-none placeholder:text-white/35"
+              className="min-w-0 flex-1 bg-transparent py-1 text-xs font-semibold text-white outline-none placeholder:text-slate-600"
             />
             {searching && <Loader2 className="h-4 w-4 animate-spin text-aqua" />}
             {query && !searching && (
-              <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); setResults([]); }} className="grid h-6 w-6 place-items-center rounded-full text-white/45 hover:bg-white/10 hover:text-white">
+              <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); setResults([]); }} className="flex h-5 w-5 items-center justify-center rounded-md text-slate-500 hover:bg-white/10 hover:text-white">
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
+            <div className="hidden items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-bold text-slate-600 lg:flex uppercase">
+              K
+            </div>
           </div>
-          {searchOpen && query.trim().length >= 2 && (
-            <div className="glass-strong absolute left-0 right-0 top-[calc(100%+0.75rem)] z-50 overflow-hidden rounded-3xl p-2">
-              {searching ? (
+          {searchOpen && (query.trim().length >= 2 || recentSearches.length > 0) && (
+            <div className="glass-strong absolute left-0 right-0 top-[calc(100%+0.75rem)] z-50 overflow-hidden rounded-2xl p-2 shadow-2xl">
+              {query.trim().length < 2 ? (
+                <div className="p-2">
+                  <p className="px-2 pb-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/35">Recent searches</p>
+                  <div className="space-y-1">
+                    {recentSearches.map((item) => (
+                      <button key={item} type="button" onClick={() => handleRecentSearch(item)} className="focus-ring w-full rounded-2xl px-3 py-2 text-left text-sm font-bold text-white/70 transition hover:bg-white/[0.07]">
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : searching ? (
                 <div className="space-y-2 p-2">
                   {[0, 1, 2].map((item) => <div key={item} className="h-12 animate-pulse rounded-2xl bg-white/[0.06]" />)}
                 </div>
@@ -117,7 +169,7 @@ export default function Header({ admin = false, onMenuClick }) {
               ) : (
                 <div className="p-5 text-center">
                   <p className="text-sm font-black">No matches found</p>
-                  <p className="mt-1 text-xs leading-5 text-white/42">{admin ? 'Try a client, invoice, approval, or project term.' : 'Only your own projects, files, invoices, and messages are searchable.'}</p>
+                  <p className="mt-1 text-xs leading-5 text-white/42">{admin ? 'Try a client, invoice, contract, file, message, or project term.' : 'Only your own files, invoices, contracts, and deliverables are searchable.'}</p>
                 </div>
               )}
             </div>
@@ -168,9 +220,18 @@ export default function Header({ admin = false, onMenuClick }) {
             />
             {searching && <Loader2 className="h-4 w-4 animate-spin text-aqua" />}
           </div>
-          {searchOpen && query.trim().length >= 2 && (
+          {searchOpen && (query.trim().length >= 2 || recentSearches.length > 0) && (
             <div className="glass-strong absolute left-0 right-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-3xl p-2">
-              {searching ? (
+              {query.trim().length < 2 ? (
+                <div className="p-2">
+                  <p className="px-2 pb-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/35">Recent searches</p>
+                  {recentSearches.map((item) => (
+                    <button key={`mobile-recent-${item}`} type="button" onClick={() => handleRecentSearch(item)} className="focus-ring w-full rounded-2xl px-3 py-2 text-left text-sm font-bold text-white/70 transition hover:bg-white/[0.07]">
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              ) : searching ? (
                 <div className="space-y-2 p-2">
                   {[0, 1].map((item) => <div key={item} className="h-12 animate-pulse rounded-2xl bg-white/[0.06]" />)}
                 </div>
@@ -189,7 +250,7 @@ export default function Header({ admin = false, onMenuClick }) {
               ) : (
                 <div className="p-5 text-center">
                   <p className="text-sm font-black">No matches found</p>
-                  <p className="mt-1 text-xs leading-5 text-white/42">{admin ? 'Try a wider global search term.' : 'Only your own portal content is searched.'}</p>
+                  <p className="mt-1 text-xs leading-5 text-white/42">{admin ? 'Try a wider global search term.' : 'Only your own files, invoices, contracts, and deliverables are searched.'}</p>
                 </div>
               )}
             </div>

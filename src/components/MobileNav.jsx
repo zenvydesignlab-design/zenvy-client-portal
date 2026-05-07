@@ -16,21 +16,21 @@ const adminLinks = [
 export default function MobileNav({ admin }) {
   const links = admin ? adminLinks : clientLinks;
   return (
-    <nav className="fixed inset-x-3 bottom-3 z-40 rounded-[1.35rem] border border-white/10 bg-night/80 p-2 shadow-glow backdrop-blur-2xl lg:hidden">
-      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${links.length}, minmax(0, 1fr))` }}>
+    <nav className="fixed inset-x-6 bottom-8 z-40 rounded-xl border border-white/5 bg-night/60 p-1 shadow-2xl backdrop-blur-xl lg:hidden">
+      <div className="flex items-center justify-around gap-1">
         {links.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={to}
             end={end}
             className={({ isActive }) =>
-              `flex flex-col items-center gap-1 rounded-2xl px-2 py-2 text-[11px] font-black transition ${
-                isActive ? 'bg-white text-night' : 'text-white/55'
+              `flex flex-1 flex-col items-center gap-1.5 rounded-lg py-2 text-[9px] font-bold uppercase tracking-widest transition-all ${
+                isActive ? 'bg-white/10 text-white' : 'text-slate-500'
               }`
             }
           >
             <Icon className="h-4 w-4" />
-            {label}
+            <span>{label}</span>
           </NavLink>
         ))}
       </div>

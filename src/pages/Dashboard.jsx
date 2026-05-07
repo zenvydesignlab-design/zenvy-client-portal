@@ -31,69 +31,76 @@ export default function Dashboard() {
   if (loading) return <Loader label="Loading projects" />;
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      <section className="glass overflow-hidden rounded-[2rem] p-6 sm:p-8">
-        <div className="grid gap-8 xl:grid-cols-[1fr_26rem]">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10">
+      <section className="relative overflow-hidden rounded-3xl border border-white/5 bg-white/[0.01] p-8 sm:p-10">
+        <div className="relative z-10 grid gap-10 xl:grid-cols-[1fr_24rem]">
           <div className="max-w-3xl">
-            <p className="text-sm font-black uppercase tracking-[0.28em] text-aqua/75">Welcome to Zenvy Portal</p>
-            <h2 className="mt-3 text-4xl font-black tracking-tight sm:text-5xl">Your project cockpit is ready, {user.email.split('@')[0]}.</h2>
-            <p className="mt-4 text-base leading-7 text-white/54">Track active work, review updates, open your assets hub, answer brief questions, and keep decisions moving.</p>
-            <div className="mt-7 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <Clock className="mb-3 h-5 w-5 text-aqua" />
-                <p className="text-sm font-black">Current phase</p>
-                <p className="mt-1 text-xs text-white/45">{primaryProject?.status || 'Awaiting project'}</p>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="h-1.5 w-1.5 rounded-full bg-aqua" />
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Workspace Overview</p>
+            </div>
+            <h2 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">Welcome back, {user.email.split('@')[0]}.</h2>
+            <p className="mt-4 text-base leading-relaxed text-slate-400">Your creative cockpit is ready. Track active work, review updates, and manage your project assets in one place.</p>
+            <div className="mt-8 grid gap-4 sm:grid-cols-3">
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Current phase</p>
+                <p className="text-sm font-semibold text-white">{primaryProject?.status || 'Awaiting project'}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <Sparkles className="mb-3 h-5 w-5 text-violet" />
-                <p className="text-sm font-black">Next action</p>
-                <p className="mt-1 text-xs text-white/45">{checklist.find((item) => !item.done)?.label || 'Review latest update'}</p>
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Next action</p>
+                <p className="text-sm font-semibold text-white truncate">{checklist.find((item) => !item.done)?.label || 'Review latest update'}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-                <CheckCircle2 className="mb-3 h-5 w-5 text-emerald-200" />
-                <p className="text-sm font-black">Onboarding</p>
-                <p className="mt-1 text-xs text-white/45">{completedSteps} of {checklist.length} complete</p>
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Onboarding</p>
+                <p className="text-sm font-semibold text-white">{completedSteps} of {checklist.length} steps</p>
               </div>
             </div>
           </div>
-          <div className="rounded-3xl border border-white/10 bg-night/35 p-4">
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm font-black">Onboarding checklist</p>
-              <span className="rounded-full border border-aqua/20 bg-aqua/10 px-3 py-1 text-xs font-black text-aqua">{Math.round((completedSteps / checklist.length) * 100)}%</span>
+          <div className="rounded-2xl border border-white/5 bg-night-light/50 p-6">
+            <div className="mb-6 flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-widest text-white">Onboarding Checklist</p>
+              <span className="text-xs font-bold text-aqua">{Math.round((completedSteps / checklist.length) * 100)}%</span>
             </div>
             <div className="space-y-3">
               {checklist.map((item, index) => (
-                <motion.div key={item.label} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.06 }} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-                  <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border ${item.done ? 'border-emerald-300/30 bg-emerald-300/10 text-emerald-200' : 'border-white/10 bg-white/5 text-white/35'}`}>
-                    <CheckCircle2 className="h-4 w-4" />
+                <motion.div key={item.label} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.05 }} className="flex items-center gap-3">
+                  <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${item.done ? 'border-aqua/30 bg-aqua/10 text-aqua' : 'border-white/10 bg-white/5 text-white/20'}`}>
+                    {item.done && <CheckCircle2 className="h-3 w-3" />}
                   </span>
-                  <span className={`text-sm font-bold ${item.done ? 'text-white' : 'text-white/52'}`}>{item.label}</span>
+                  <span className={`text-xs font-medium ${item.done ? 'text-white/80 line-through' : 'text-white'}`}>{item.label}</span>
                 </motion.div>
               ))}
             </div>
           </div>
         </div>
+        {/* Decorative background element */}
+        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-aqua/5 blur-[100px]" />
       </section>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-6 md:grid-cols-3">
         <StatCard icon={FolderKanban} label="Active projects" value={projects.length} />
         <StatCard icon={TrendingUp} label="Average progress" value={`${average}%`} tone="violet" />
         <StatCard icon={MessageSquare} label="Open threads" value={projects.length} tone="ember" />
       </div>
 
-      {error && <div className="rounded-2xl border border-ember/30 bg-ember/10 p-4 text-sm font-bold text-ember">{error}</div>}
-
-      <section className="grid gap-5 xl:grid-cols-[1fr_24rem]">
-        {projects.length === 0 ? (
-        <EmptyState title="No projects assigned" text="Your assigned projects will appear here as soon as the team creates them." />
-      ) : (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {projects.map((project) => <ProjectCard key={project.id} project={project} />)}
+      <section className="grid gap-8 xl:grid-cols-[1fr_24rem]">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-white">Active Work</h3>
+          </div>
+          {projects.length === 0 ? (
+            <EmptyState title="No projects assigned" text="Your assigned projects will appear here as soon as the team creates them." />
+          ) : (
+            <div className="grid gap-6 md:grid-cols-2">
+              {projects.map((project) => <ProjectCard key={project.id} project={project} />)}
+            </div>
+          )}
         </div>
-      )}
-        <div className="glass rounded-3xl p-5">
-          <h3 className="mb-5 text-xl font-black">Latest updates</h3>
-          {latestActivity.length ? <ActivityTimeline items={latestActivity} compact /> : <p className="text-sm text-white/45">Updates will appear here once your project starts moving.</p>}
+        <div className="glass rounded-3xl p-6">
+          <div className="mb-6 flex items-center justify-between">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-white">Latest updates</h3>
+          </div>
+          {latestActivity.length ? <ActivityTimeline items={latestActivity} compact /> : <p className="text-xs text-slate-500">Updates will appear here once your project starts moving.</p>}
         </div>
       </section>
     </motion.div>

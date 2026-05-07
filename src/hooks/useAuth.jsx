@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { getCurrentProfile, getProfileByUserId, signInWithEmail, signOut as signOutService } from '../services/auth';
 import { isSupabaseConfigured, supabase } from '../services/supabaseClient';
@@ -8,15 +8,18 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const loadedProfileId = useRef('');
 
   const refreshUser = useCallback(async () => {
     setLoading(true);
     try {
       const profile = await getCurrentProfile();
+      loadedProfileId.current = profile?.id || '';
       setUser(profile);
       return profile;
     } catch (error) {
       if (isSupabaseConfigured) toast.error(error.message || 'Unable to load profile');
+      loadedProfileId.current = '';
       setUser(null);
       return null;
     } finally {
@@ -25,36 +28,51 @@ export function AuthProvider({ children }) {
   }, []);
 
   const loadSessionUser = useCallback(async (session) => {
-    setLoading(true);
     try {
       if (!session?.user) {
+        loadedProfileId.current = '';
         setUser(null);
         return null;
       }
+      if (loadedProfileId.current === session.user.id) return null;
       const profile = await getProfileByUserId(session.user.id);
+      loadedProfileId.current = profile.id;
       setUser(profile);
       return profile;
     } catch (error) {
-      toast.error(error.message || 'Unable to load profile');
+      if (isSupabaseConfigured) toast.error(error.message || 'Unable to load profile');
       setUser(null);
       return null;
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     let active = true;
-    refreshUser();
+    
+    const init = async () => {
+      setLoading(true);
+      await refreshUser();
+      if (active) setLoading(false);
+    };
+    
+    init();
+    
     if (!isSupabaseConfigured) return undefined;
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setTimeout(() => {
+
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'USER_UPDATED') {
         if (active) loadSessionUser(session);
-      }, 0);
+      } else if (event === 'SIGNED_OUT') {
+        if (active) {
+          loadedProfileId.current = '';
+          setUser(null);
+        }
+      }
     });
+
     return () => {
       active = false;
-      data.subscription.unsubscribe();
+      data?.subscription?.unsubscribe();
     };
   }, [loadSessionUser, refreshUser]);
 

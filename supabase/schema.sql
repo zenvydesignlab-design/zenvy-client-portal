@@ -53,14 +53,25 @@ create table if not exists public.questions (
 create table if not exists public.invoices (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
+  client_id uuid references public.users(id) on delete set null,
   created_by uuid references public.users(id) on delete set null default auth.uid(),
+  client_email text,
+  client_name text,
   invoice_number text not null,
-  title text not null,
+  title text default 'Invoice',
+  description text,
   amount numeric(12,2) not null default 0,
-  status text not null default 'pending' check (status in ('paid', 'pending', 'overdue')),
+  subtotal numeric(12,2) not null default 0,
+  tax numeric(12,2) not null default 0,
+  total numeric(12,2) not null default 0,
+  currency text not null default 'INR',
+  status text not null default 'pending' check (status in ('paid', 'pending', 'overdue', 'void')),
   due_date date,
+  payment_terms text,
   pdf_url text,
   notes text,
+  line_items jsonb not null default '[]'::jsonb,
+  tax_rate numeric(5,2) not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -68,10 +79,36 @@ create table if not exists public.invoices (
 create table if not exists public.contracts (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
-  title text not null,
-  contract_url text not null,
+  client_id uuid references public.users(id) on delete set null,
+  client_email text,
+  client_name text,
+  title text default 'Project Agreement',
+  project_scope text,
+  scope text,
+  deliverables jsonb not null default '[]'::jsonb,
+  timeline text,
+  timelines text,
+  payment_terms text,
+  revisions text,
+  revision_limits text,
+  ownership_clause text,
+  cancellation_clause text,
+  ownership_terms text,
+  cancellation_terms text,
+  notes text,
+  signatures jsonb not null default '{}'::jsonb,
+  status text not null default 'draft' check (status in ('draft', 'sent', 'approved', 'archived')),
+  signed boolean not null default false,
+  signed_by text,
+  signed_email text,
+  signed_at timestamptz,
+  signature_ip text,
+  agreement_version text not null default 'v1.0',
+  contract_url text,
+  pdf_url text,
   created_by uuid references public.users(id) on delete set null default auth.uid(),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.meetings (
@@ -118,11 +155,26 @@ on public.invoices (due_date);
 create index if not exists invoices_created_by_idx
 on public.invoices (created_by);
 
+create index if not exists invoices_client_id_idx
+on public.invoices (client_id);
+
+create index if not exists invoices_status_idx
+on public.invoices (status);
+
 create index if not exists contracts_project_id_idx
 on public.contracts (project_id);
 
 create index if not exists contracts_created_by_idx
 on public.contracts (created_by);
+
+create index if not exists contracts_client_id_idx
+on public.contracts (client_id);
+
+create index if not exists contracts_status_idx
+on public.contracts (status);
+
+create index if not exists contracts_signed_idx
+on public.contracts (signed);
 
 create table if not exists public.answers (
   id uuid primary key default gen_random_uuid(),
@@ -167,6 +219,86 @@ as $$
     where id = auth.uid() and role = 'admin'
   );
 $$;
+
+create or replace function public.is_project_client(project_id_text text, user_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select case
+    when project_id_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      then exists (
+        select 1
+        from public.projects
+        where id = project_id_text::uuid
+          and client_id = user_id
+      )
+    else false
+  end;
+$$;
+
+create or replace function public.sign_contract(
+  contract_id uuid,
+  signer_name text,
+  signer_email text
+)
+returns public.contracts
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  signed_contract public.contracts;
+  request_headers jsonb;
+  request_ip text;
+begin
+  if nullif(trim(signer_name), '') is null then
+    raise exception 'Signer name is required';
+  end if;
+
+  if nullif(trim(signer_email), '') is null then
+    raise exception 'Signer email is required';
+  end if;
+
+  request_headers := coalesce(nullif(current_setting('request.headers', true), '')::jsonb, '{}'::jsonb);
+  request_ip := coalesce(
+    request_headers->>'x-forwarded-for',
+    request_headers->>'cf-connecting-ip',
+    request_headers->>'x-real-ip'
+  );
+
+  update public.contracts
+  set status = 'approved',
+      signed = true,
+      signed_by = trim(signer_name),
+      signed_email = trim(signer_email),
+      signed_at = now(),
+      signature_ip = nullif(split_part(coalesce(request_ip, ''), ',', 1), ''),
+      agreement_version = coalesce(nullif(agreement_version, ''), 'v1.0'),
+      updated_at = now()
+  where id = contract_id
+    and (
+      public.is_admin()
+      or exists (
+        select 1
+        from public.projects
+        where projects.id = contracts.project_id
+          and projects.client_id = auth.uid()
+      )
+    )
+  returning * into signed_contract;
+
+  if signed_contract.id is null then
+    raise exception 'Contract is unavailable or not assigned to this user';
+  end if;
+
+  return signed_contract;
+end;
+$$;
+
+grant execute on function public.sign_contract(uuid, text, text) to authenticated;
 
 alter table public.users enable row level security;
 alter table public.projects enable row level security;
@@ -294,6 +426,21 @@ on public.files for all
 using (public.is_admin())
 with check (public.is_admin());
 
+drop policy if exists "Project participants insert files" on public.files;
+create policy "Project participants insert files"
+on public.files for insert
+with check (
+  user_id = auth.uid()
+  and (
+    public.is_admin()
+    or exists (
+      select 1 from public.projects
+      where projects.id = files.project_id
+      and projects.client_id = auth.uid()
+    )
+  )
+);
+
 drop policy if exists "Project participants read invoices" on public.invoices;
 create policy "Project participants read invoices"
 on public.invoices for select
@@ -413,10 +560,57 @@ with check (
   )
 );
 
-drop policy if exists "Admins delete questions" on public.questions;
-create policy "Admins delete questions"
-on public.questions for delete
+drop policy if exists "Project participants read questions" on public.questions;
+create policy "Project participants read questions"
+on public.questions for select
+using (
+  public.is_admin()
+  or exists (
+    select 1 from public.projects
+    where projects.id = questions.project_id
+    and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins manage questions" on public.questions;
+create policy "Admins manage questions"
+on public.questions for all
 using (public.is_admin());
+
+drop policy if exists "Clients answer assigned project questions" on public.answers;
+create policy "Clients answer assigned project questions"
+on public.answers for all
+using (
+  user_id = auth.uid()
+  and exists (
+    select 1
+    from public.questions
+    join public.projects on projects.id = questions.project_id
+    where questions.id = answers.question_id
+      and projects.client_id = auth.uid()
+  )
+)
+with check (
+  user_id = auth.uid()
+  and exists (
+    select 1
+    from public.questions
+    join public.projects on projects.id = questions.project_id
+    where questions.id = answers.question_id
+      and projects.client_id = auth.uid()
+  )
+);
+
+drop policy if exists "Admins read all answers" on public.answers;
+create policy "Admins read all answers"
+on public.answers for select
+using (public.is_admin());
+
+drop policy if exists "Admins manage notifications" on public.notifications;
+create policy "Admins manage notifications"
+on public.notifications for all
+using (public.is_admin())
+with check (public.is_admin());
 
 drop policy if exists "Users read assigned notifications" on public.notifications;
 create policy "Users read assigned notifications"
@@ -457,6 +651,15 @@ with check (
   and public.is_admin()
 );
 
+drop policy if exists "Clients upload assigned project files" on storage.objects;
+create policy "Clients upload assigned project files"
+on storage.objects for insert
+with check (
+  bucket_id = 'project-files'
+  and (storage.foldername(name))[2] = auth.uid()::text
+  and public.is_project_client((storage.foldername(name))[1], auth.uid())
+);
+
 drop policy if exists "Admins update project files" on storage.objects;
 create policy "Admins update project files"
 on storage.objects for update
@@ -482,5 +685,8 @@ create policy "Authenticated users read project files bucket"
 on storage.objects for select
 using (
   bucket_id = 'project-files'
-  and auth.role() = 'authenticated'
+  and (
+    public.is_admin()
+    or public.is_project_client((storage.foldername(name))[1], auth.uid())
+  )
 );

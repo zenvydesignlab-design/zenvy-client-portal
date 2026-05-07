@@ -3,13 +3,13 @@ import { useState } from 'react';
 import { toast } from 'react-hot-toast';
 import { formatDate, saveMeeting } from '../services/api';
 
-export default function MeetingPanel({ projectId, meetings = [], isAdmin = false, onChanged }) {
+export default function MeetingPanel({ project, meetings = [], isAdmin = false, onChanged }) {
   const [form, setForm] = useState({ title: 'Kickoff / review call', starts_at: '', meeting_url: '' });
 
   const submit = async () => {
     if (!form.meeting_url.trim()) return;
     try {
-      await saveMeeting({ ...form, project_id: projectId });
+      await saveMeeting({ ...form, project_id: project.id });
       toast.success('Meeting saved');
       setForm({ title: 'Kickoff / review call', starts_at: '', meeting_url: '' });
       onChanged?.();

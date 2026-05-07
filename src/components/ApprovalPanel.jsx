@@ -9,14 +9,14 @@ const styles = {
   revision_requested: 'border-violet/25 bg-violet/10 text-violet',
 };
 
-export default function ApprovalPanel({ projectId, approvals = [], isAdmin = false, onChanged }) {
+export default function ApprovalPanel({ project, approvals = [], isAdmin = false, onChanged }) {
   const [form, setForm] = useState({ title: '', description: '', asset_url: '' });
   const [feedback, setFeedback] = useState({});
 
   const submit = async () => {
     if (!form.title.trim()) return;
     try {
-      await saveApproval({ ...form, project_id: projectId, status: 'pending' });
+      await saveApproval({ ...form, project_id: project.id, status: 'pending' });
       toast.success('Approval request created');
       setForm({ title: '', description: '', asset_url: '' });
       onChanged?.();

@@ -315,7 +315,7 @@ export async function getInvoices(projectId) {
   return optionalQuery(async () => {
     const { data, error } = await supabase
       .from('invoices')
-      .select('id, project_id, created_by, invoice_number, title, amount, status, due_date, pdf_url, notes, created_at, updated_at')
+      .select('*')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false });
     if (error) throw error;
@@ -325,15 +325,31 @@ export async function getInvoices(projectId) {
 
 export async function saveInvoice(payload, user) {
   const supabase = requireSupabase();
+  const lineItems = Array.isArray(payload.line_items) ? payload.line_items : [];
+  const subtotal = Number(payload.subtotal ?? lineItems.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0));
+  const taxRate = Number(payload.tax_rate || 0);
+  const tax = Number(payload.tax ?? subtotal * (taxRate / 100));
+  const total = Number(payload.total ?? payload.amount ?? subtotal + tax);
   const normalized = {
-    ...payload,
-    amount: Number(payload.amount || 0),
-    status: payload.status || 'pending',
-    invoice_number: payload.invoice_number?.trim(),
-    title: payload.title?.trim() || payload.invoice_number?.trim(),
+    id: payload.id,
+    project_id: payload.project_id,
+    amount: total,
+    subtotal,
+    tax,
+    total,
+    currency: payload.currency || 'INR',
+    status: ['paid', 'pending', 'overdue', 'void'].includes(payload.status) ? payload.status : 'pending',
+    invoice_number: payload.invoice_number?.trim() || `INV-${Date.now()}`,
+    title: payload.title?.trim() || payload.invoice_number?.trim() || 'Invoice',
+    description: payload.description?.trim() || null,
     pdf_url: payload.pdf_url?.trim() || null,
+    payment_terms: payload.payment_terms?.trim() || null,
     notes: payload.notes?.trim() || null,
     due_date: payload.due_date || null,
+    line_items: lineItems,
+    tax_rate: taxRate,
+    client_name: payload.client_name?.trim() || null,
+    client_email: payload.client_email?.trim() || null,
     updated_at: new Date().toISOString(),
   };
   if (!normalized.id) {
@@ -341,24 +357,14 @@ export async function saveInvoice(payload, user) {
     delete normalized.id;
   }
   const { data, error } = await supabase.from('invoices').upsert(normalized).select().single();
-  if (error) {
-    if (relationMissingPattern.test(error.message || '')) {
-      throw new Error('The invoices table is missing in Supabase. Apply the latest invoice migration, then reload the portal.');
-    }
-    throw error;
-  }
+  if (error) throw error;
   return data;
 }
 
 export async function deleteInvoice(invoiceId) {
   const supabase = requireSupabase();
   const { error } = await supabase.from('invoices').delete().eq('id', invoiceId);
-  if (error) {
-    if (relationMissingPattern.test(error.message || '')) {
-      throw new Error('The invoices table is missing in Supabase. Apply the latest invoice migration, then reload the portal.');
-    }
-    throw error;
-  }
+  if (error) throw error;
   return true;
 }
 
@@ -379,7 +385,7 @@ export async function getContracts(projectId) {
   return optionalQuery(async () => {
     const { data, error } = await supabase
       .from('contracts')
-      .select('id, project_id, title, contract_url, created_by, created_at')
+      .select('*')
       .eq('project_id', projectId)
       .order('created_at', { ascending: false });
     if (error) throw error;
@@ -389,28 +395,77 @@ export async function getContracts(projectId) {
 
 export async function saveContract(payload, user) {
   const supabase = requireSupabase();
+  const pdfUrl = payload.pdf_url?.trim() || payload.contract_url?.trim() || null;
+  const approved = payload.status === 'approved' || payload.signed === true;
   const normalized = {
-    ...payload,
-    title: payload.title?.trim(),
-    contract_url: payload.contract_url?.trim(),
+    id: payload.id,
+    project_id: payload.project_id,
+    title: payload.title?.trim() || 'Project Agreement',
+    pdf_url: pdfUrl,
+    project_scope: payload.project_scope?.trim() || payload.scope?.trim() || null,
+    deliverables: Array.isArray(payload.deliverables) ? payload.deliverables.filter(Boolean) : [],
+    timeline: payload.timeline?.trim() || payload.timelines?.trim() || null,
+    payment_terms: payload.payment_terms?.trim() || null,
+    revisions: payload.revisions?.trim() || payload.revision_limits?.trim() || null,
+    ownership_clause: payload.ownership_clause?.trim() || payload.ownership_terms?.trim() || null,
+    cancellation_clause: payload.cancellation_clause?.trim() || payload.cancellation_terms?.trim() || null,
+    notes: payload.notes?.trim() || null,
+    status: ['draft', 'sent', 'approved', 'archived'].includes(payload.status) ? payload.status : 'draft',
+    signed: approved,
+    signed_by: payload.signed_by?.trim() || null,
+    signed_email: payload.signed_email?.trim() || null,
+    signed_at: approved ? (payload.signed_at || new Date().toISOString()) : null,
+    signature_ip: payload.signature_ip || null,
+    agreement_version: payload.agreement_version || 'v1.0',
+    client_name: payload.client_name?.trim() || null,
+    client_email: payload.client_email?.trim() || null,
+    updated_at: new Date().toISOString(),
   };
   if (!normalized.id) {
     normalized.created_by = user?.id;
     delete normalized.id;
   }
   const { data, error } = await supabase.from('contracts').upsert(normalized).select().single();
-  if (error) {
-    if (relationMissingPattern.test(error.message || '')) {
-      throw new Error('The contracts table is missing in Supabase. Apply the latest contract migration, then reload the portal.');
-    }
-    throw error;
-  }
+  if (error) throw error;
+  return data;
+}
+
+export async function signContract({ contractId, signerName, signerEmail }) {
+  const supabase = requireSupabase();
+  const { data, error } = await supabase.rpc('sign_contract', {
+    contract_id: contractId,
+    signer_name: signerName,
+    signer_email: signerEmail,
+  });
+  if (error) throw error;
   return data;
 }
 
 export async function deleteContract(contractId) {
   const supabase = requireSupabase();
   const { error } = await supabase.from('contracts').delete().eq('id', contractId);
+  if (error) throw error;
+  return true;
+}
+
+export async function deleteFileRecord(file) {
+  const supabase = requireSupabase();
+  if (file.file_path) {
+    await supabase.storage.from('project-files').remove([file.file_path]);
+  }
+  const { error } = await supabase.from('files').delete().eq('id', file.id);
+  if (error) throw error;
+  return true;
+}
+
+export async function bulkDeleteFiles(files) {
+  const supabase = requireSupabase();
+  const paths = files.map((f) => f.file_path).filter(Boolean);
+  const ids = files.map((f) => f.id);
+  if (paths.length) {
+    await supabase.storage.from('project-files').remove(paths);
+  }
+  const { error } = await supabase.from('files').delete().in('id', ids);
   if (error) throw error;
   return true;
 }
@@ -428,67 +483,78 @@ export async function globalSearch(user, term) {
   const query = term.trim();
   if (query.length < 2) return [];
   const supabase = requireSupabase();
+  const isAdmin = user?.role === 'admin';
   const projects = await getProjects(user);
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const projectIds = projects.map((project) => project.id);
   if (user?.role !== 'admin' && !projectIds.length) return [];
 
-  const output = projects
-    .filter((project) => matchesTerm([project.name, project.description, project.status], query))
-    .map((project) => result('project', project.name, project.status, user?.role === 'admin' ? `/admin/projects/${project.id}` : `/projects/${project.id}`, project.updated_at));
+  const output = isAdmin
+    ? projects
+      .filter((project) => matchesTerm([project.name, project.description, project.status], query))
+      .map((project) => result('project', project.name, project.status, `/admin/projects/${project.id}`, project.updated_at))
+    : [];
 
   const scoped = (table) => {
     let request = supabase.from(table).select('*').limit(60);
-    if (user?.role !== 'admin') request = request.in('project_id', projectIds);
+    if (!isAdmin) request = request.in('project_id', projectIds);
     return request;
   };
 
   const [users, invoices, files, messages, approvals, questions, contracts, questionnaireTemplates, questionnaireResponses] = await Promise.all([
-    user?.role === 'admin'
+    isAdmin
       ? optionalQuery(async () => {
         const { data, error } = await supabase.from('users').select('id,email,role,status').limit(80);
         if (error) throw error;
         return data || [];
       })
       : [],
-    optionalQuery(async () => {
-      const { data, error } = await scoped('invoices');
-      if (error) throw error;
-      return data || [];
-    }),
+    isAdmin
+      ? optionalQuery(async () => {
+        const { data, error } = await scoped('invoices');
+        if (error) throw error;
+        return data || [];
+      })
+      : [],
     optionalQuery(async () => {
       const { data, error } = await scoped('files');
       if (error) throw error;
       return data || [];
     }),
-    optionalQuery(async () => {
+    isAdmin
+      ? optionalQuery(async () => {
       const { data, error } = await scoped('messages');
       if (error) throw error;
       return data || [];
-    }),
-    optionalQuery(async () => {
+      })
+      : [],
+    isAdmin
+      ? optionalQuery(async () => {
       const { data, error } = await scoped('approvals');
       if (error) throw error;
       return data || [];
-    }),
+      })
+      : [],
     optionalQuery(async () => {
       const { data, error } = await scoped('questions');
       if (error) throw error;
       return data || [];
     }),
-    optionalQuery(async () => {
-      const { data, error } = await scoped('contracts');
-      if (error) throw error;
-      return data || [];
-    }),
-    user?.role === 'admin'
+    isAdmin
+      ? optionalQuery(async () => {
+        const { data, error } = await scoped('contracts');
+        if (error) throw error;
+        return data || [];
+      })
+      : [],
+    isAdmin
       ? optionalQuery(async () => {
         const { data, error } = await scoped('questionnaire_templates');
         if (error) throw error;
         return data || [];
       })
       : [],
-    user?.role === 'admin'
+    isAdmin
       ? optionalQuery(async () => {
         const { data, error } = await scoped('questionnaire_responses');
         if (error) throw error;
@@ -497,30 +563,40 @@ export async function globalSearch(user, term) {
       : [],
   ]);
 
-  if (user?.role === 'admin') {
+  if (isAdmin) {
     users
       .filter((client) => matchesTerm([client.email, client.role, client.status], query))
       .forEach((client) => output.push(result('client', client.email, client.role, '/admin/clients', client.created_at)));
   }
 
-  const projectHref = (projectId) => user?.role === 'admin' ? `/admin/projects/${projectId}` : `/projects/${projectId}`;
+  const projectHref = (projectId) => isAdmin ? `/admin/projects/${projectId}` : `/projects/${projectId}`;
   invoices
     .filter((invoice) => matchesTerm([invoice.invoice_number, invoice.title, invoice.status, invoice.notes, projectById.get(invoice.project_id)?.name], query))
     .forEach((invoice) => output.push(result('invoice', invoice.invoice_number || invoice.title, projectById.get(invoice.project_id)?.name || 'Invoice', projectHref(invoice.project_id), invoice.created_at)));
   files
     .filter((file) => matchesTerm([file.name, file.file_url, projectById.get(file.project_id)?.name], query))
     .forEach((file) => output.push(result('file', file.name || 'Project file', projectById.get(file.project_id)?.name || 'File', projectHref(file.project_id), file.uploaded_at)));
-  messages
-    .filter((message) => matchesTerm([message.text, message.sender, projectById.get(message.project_id)?.name], query))
-    .forEach((message) => output.push(result('message', message.text, `${message.sender} message`, projectHref(message.project_id), message.created_at)));
-  approvals
-    .filter((approval) => matchesTerm([approval.title, approval.description, approval.status, approval.feedback, projectById.get(approval.project_id)?.name], query))
-    .forEach((approval) => output.push(result('approval', approval.title, approval.status, projectHref(approval.project_id), approval.created_at)));
-  questions
-    .filter((question) => matchesTerm([question.question, question.type, projectById.get(question.project_id)?.name], query))
-    .forEach((question) => output.push(result('questionnaire', question.question, projectById.get(question.project_id)?.name || 'Questionnaire', projectHref(question.project_id), question.created_at)));
+  if (isAdmin) {
+    messages
+      .filter((message) => matchesTerm([message.text, message.sender, projectById.get(message.project_id)?.name], query))
+      .forEach((message) => output.push(result('message', message.text, `${message.sender} message`, projectHref(message.project_id), message.created_at)));
+  }
+  if (isAdmin) {
+    approvals
+      .filter((approval) => matchesTerm([approval.title, approval.description, approval.status, approval.feedback, projectById.get(approval.project_id)?.name], query))
+      .forEach((approval) => output.push(result('approval', approval.title, approval.status, projectHref(approval.project_id), approval.created_at)));
+  }
+  if (isAdmin) {
+    questions
+      .filter((question) => matchesTerm([question.question, question.type, projectById.get(question.project_id)?.name], query))
+      .forEach((question) => output.push(result('questionnaire', question.question, projectById.get(question.project_id)?.name || 'Questionnaire', projectHref(question.project_id), question.created_at)));
+  } else {
+    questions
+      .filter((question) => matchesTerm([question.question, question.type], query))
+      .forEach((question) => output.push(result('deliverable', question.question, projectById.get(question.project_id)?.name || 'Project questionnaire', projectHref(question.project_id), question.created_at)));
+  }
   contracts
-    .filter((contract) => matchesTerm([contract.title, contract.contract_url, projectById.get(contract.project_id)?.name], query))
+    .filter((contract) => matchesTerm([contract.title, contract.contract_url, contract.scope, contract.payment_terms, projectById.get(contract.project_id)?.name], query))
     .forEach((contract) => output.push(result('contract', contract.title, projectById.get(contract.project_id)?.name || 'Contract', projectHref(contract.project_id), contract.created_at)));
   questionnaireTemplates
     .filter((template) => matchesTerm([template.name, JSON.stringify(template.questions || []), projectById.get(template.project_id)?.name], query))
@@ -535,16 +611,17 @@ export async function globalSearch(user, term) {
 }
 
 export function deriveInvoiceStatus(invoice) {
+  if (invoice.status === 'void') return 'void';
   if (invoice.status === 'paid') return 'paid';
   if (invoice.status === 'overdue') return 'overdue';
   if (invoice.due_date && new Date(invoice.due_date) < new Date(new Date().toDateString())) return 'overdue';
   return 'pending';
 }
 
-export function formatCurrency(value) {
+export function formatCurrency(value, currency = 'INR') {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
-    currency: 'INR',
+    currency,
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
 }

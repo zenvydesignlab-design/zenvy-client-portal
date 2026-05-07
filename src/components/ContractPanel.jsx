@@ -1,58 +1,50 @@
-import { Download, FileCheck2, FileText, Link as LinkIcon, Loader2, Save, Trash2, UploadCloud } from 'lucide-react';
+import { CheckCircle2, Download, Edit3, Eye, FileSignature, FileText, Loader2, Plus, ScrollText, ShieldCheck, Trash2 } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
 import { toast } from 'react-hot-toast';
-import { deleteContract, formatDate, isValidExternalUrl, normalizeAssetLink, openAssetLink, saveContract, uploadContractPdf } from '../services/api';
+import { PDFDownloadLink } from '@react-pdf/renderer';
+import {
+  deleteContract,
+  formatDate,
+  getInvoiceDownloadUrl,
+  getInvoiceViewUrl,
+  normalizeAssetLink,
+  openAssetLink,
+  saveContract,
+  signContract,
+} from '../services/api';
 import { useAuth } from '../hooks/useAuth';
+import ContractGenerator from './ContractGenerator';
+import ContractPDF from './ContractPDF';
 
-const emptyForm = { title: '', contract_url: '' };
-
-function ContractPanel({ projectId, contracts = [], isAdmin = false, onChanged }) {
+function ContractPanel({ project, contracts = [], isAdmin = false, onChanged }) {
   const { user } = useAuth();
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
+  const [editingContract, setEditingContract] = useState(null);
   const [deletingId, setDeletingId] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const sortedContracts = useMemo(() => [...contracts].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)), [contracts]);
+  const [signingId, setSigningId] = useState('');
+  const [signerName, setSignerName] = useState('');
+  const [signerEmail, setSignerEmail] = useState(user?.email || '');
+  const [accepted, setAccepted] = useState(false);
+  const [savingSignature, setSavingSignature] = useState(false);
 
-  const submit = async () => {
-    if (!form.title.trim()) {
-      toast.error('Contract title is required');
-      return;
-    }
-    if (!form.contract_url.trim() || !isValidExternalUrl(form.contract_url)) {
-      toast.error('Attach a valid Google Drive or PDF URL');
-      return;
-    }
-    setSaving(true);
+  const sortedContracts = useMemo(
+    () => [...contracts].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)),
+    [contracts],
+  );
+
+  const handleSave = async (payload) => {
     try {
-      await saveContract({ ...form, project_id: projectId }, user);
-      toast.success('Contract saved');
-      setForm(emptyForm);
+      await saveContract({ ...payload, project_id: project.id }, user);
+      toast.success(payload.id ? 'Contract updated' : 'Contract created');
+      setShowGenerator(false);
+      setEditingContract(null);
       onChanged?.();
     } catch (error) {
       toast.error(error.message || 'Unable to save contract');
-    } finally {
-      setSaving(false);
     }
   };
 
-  const uploadPdf = async (file) => {
-    if (!file) return;
-    setUploading(true);
-    try {
-      const publicUrl = await uploadContractPdf({ projectId, file, userId: user.id, onProgress: setProgress });
-      setForm((current) => ({ ...current, title: current.title || file.name.replace(/\.pdf$/i, ''), contract_url: publicUrl }));
-      toast.success('Contract PDF uploaded');
-    } catch (error) {
-      toast.error(error.message || 'Unable to upload contract');
-    } finally {
-      setUploading(false);
-      setProgress(0);
-    }
-  };
-
-  const remove = async (contract) => {
+  const removeContract = async (contract) => {
     if (!window.confirm(`Delete contract ${contract.title}?`)) return;
     setDeletingId(contract.id);
     try {
@@ -66,80 +58,202 @@ function ContractPanel({ projectId, contracts = [], isAdmin = false, onChanged }
     }
   };
 
+  const startSigning = (contract) => {
+    setSigningId(contract.id);
+    setSignerName(contract.client_name || contract.signed_by || '');
+    setSignerEmail(contract.client_email || contract.signed_email || user?.email || '');
+    setAccepted(false);
+  };
+
+  const submitSignature = async (contract) => {
+    if (!accepted) return toast.error('Confirm that you agree to the contract terms');
+    if (!signerName.trim()) return toast.error('Enter your legal full name');
+    if (!signerEmail.trim()) return toast.error('Enter your signing email');
+    setSavingSignature(true);
+    try {
+      await signContract({ contractId: contract.id, signerName, signerEmail });
+      toast.success('Agreement digitally signed');
+      setSigningId('');
+      setAccepted(false);
+      onChanged?.();
+    } catch (error) {
+      toast.error(error.message || 'Unable to sign contract');
+    } finally {
+      setSavingSignature(false);
+    }
+  };
+
+  if (showGenerator || editingContract) {
+    return (
+      <section className="glass rounded-3xl p-8">
+        <ContractGenerator 
+          project={project} 
+          contract={editingContract} 
+          onSave={handleSave} 
+          onCancel={() => { setShowGenerator(false); setEditingContract(null); }} 
+        />
+      </section>
+    );
+  }
+
   return (
-    <section className="glass rounded-3xl p-5">
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <FileCheck2 className="h-5 w-5 text-violet" />
-          <div>
-            <h3 className="text-xl font-black">Contracts</h3>
-            <p className="mt-1 text-xs font-bold text-white/42">Signed PDFs and Drive agreements stay read-only for clients.</p>
+    <section className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <ScrollText className="h-4 w-4 text-violet" />
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Legal Agreements</p>
           </div>
+          <h3 className="mt-1 text-2xl font-bold text-white">Contracts</h3>
         </div>
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-black text-white/45">{sortedContracts.length} total</span>
+        {isAdmin && (
+          <button
+            onClick={() => setShowGenerator(true)}
+            className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-night hover:bg-violet hover:text-white transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Create Contract
+          </button>
+        )}
       </div>
 
-      {isAdmin && (
-        <div className="mb-5 rounded-2xl border border-white/10 bg-white/[0.035] p-3">
-          <p className="mb-3 text-xs font-black uppercase tracking-[0.2em] text-violet/75">Add contract</p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Contract title" className="focus-ring rounded-xl border border-white/10 bg-night px-3 py-2 text-sm text-white placeholder:text-white/35" />
-            <input value={form.contract_url} onChange={(event) => setForm({ ...form, contract_url: event.target.value })} placeholder="Google Drive or Supabase PDF URL" className="focus-ring rounded-xl border border-white/10 bg-night px-3 py-2 text-sm text-white placeholder:text-white/35" />
-            <label className="focus-ring flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-violet/25 bg-violet/[0.06] px-3 py-2 text-sm font-black text-white/75 transition hover:border-violet/45">
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-              {uploading ? `Uploading ${progress}%` : 'Upload contract PDF'}
-              <input type="file" accept="application/pdf" className="hidden" onChange={(event) => uploadPdf(event.target.files?.[0])} />
-            </label>
-            <button type="button" disabled={saving || uploading} onClick={submit} className="focus-ring flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-black text-night transition hover:bg-aqua disabled:opacity-50">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save contract
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-3">
+      <div className="grid gap-4">
         {sortedContracts.length === 0 ? (
-          <p className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm text-white/45">No contracts attached yet.</p>
-        ) : sortedContracts.map((contract) => {
-          const link = normalizeAssetLink(contract.contract_url);
-          return (
-            <article key={contract.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition hover:border-violet/30 hover:bg-white/[0.06]">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 truncate text-sm font-black">
-                    <FileText className="h-4 w-4 shrink-0 text-white/45" />
-                    {contract.title}
-                  </p>
-                  <p className="mt-2 flex items-center gap-2 text-xs font-bold text-white/42">
-                    <LinkIcon className="h-3.5 w-3.5" />
-                    {link.label}
-                  </p>
+          <div className="glass flex flex-col items-center justify-center rounded-2xl py-12 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/5 text-slate-500">
+              <ScrollText className="h-6 w-6" />
+            </div>
+            <p className="mt-4 text-sm font-medium text-slate-400">No contracts generated yet.</p>
+          </div>
+        ) : (
+          sortedContracts.map((contract) => {
+            const linkedPdf = contract.pdf_url || contract.contract_url;
+            const link = normalizeAssetLink(linkedPdf);
+            const canOpenLinkedPdf = linkedPdf && link.isValid;
+
+            return (
+            <div key={contract.id} className="group glass rounded-2xl p-5 transition-all hover:border-white/10 sm:p-6">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/5 ${contract.signed ? 'text-aqua' : 'text-violet'}`}>
+                    {contract.signed ? <ShieldCheck className="h-6 w-6" /> : <FileText className="h-6 w-6" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-bold text-white">{contract.title}</p>
+                      <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${contract.signed ? 'border-aqua/20 bg-aqua/10 text-aqua' : 'border-violet/20 bg-violet/10 text-violet'}`}>
+                        {contract.signed ? 'signed' : contract.status || 'draft'}
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-slate-500">
+                      {contract.signed
+                        ? `Signed by ${contract.signed_by || contract.client_name || 'client'} ${contract.signed_at ? `on ${formatDate(contract.signed_at)}` : ''}`
+                        : `Created ${formatDate(contract.created_at)}`}
+                    </p>
+                  </div>
                 </div>
-                <span className="w-fit rounded-full border border-white/10 bg-night/35 px-3 py-1 text-[11px] font-black text-white/45">{formatDate(contract.created_at)}</span>
+
+                <div className="grid grid-cols-2 gap-2 xs:flex xs:items-center">
+                  {isAdmin && (
+                    <>
+                      <button
+                        onClick={() => setEditingContract(contract)}
+                        className="flex h-9 w-full items-center justify-center rounded-lg border border-white/5 bg-white/5 text-slate-400 hover:text-white transition-colors xs:w-9"
+                        title={contract.signed ? 'Admin override edit' : 'Edit Contract'}
+                      >
+                        <Edit3 className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => removeContract(contract)}
+                        disabled={deletingId === contract.id}
+                        className="flex h-9 w-full items-center justify-center rounded-lg border border-white/5 bg-white/5 text-slate-400 hover:text-red-400 transition-colors xs:w-9"
+                        title="Delete Contract"
+                      >
+                        {deletingId === contract.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </button>
+                    </>
+                  )}
+                  {!isAdmin && !contract.signed && (
+                    <button
+                      type="button"
+                      onClick={() => startSigning(contract)}
+                      className="col-span-2 flex h-9 items-center justify-center gap-2 rounded-lg border border-aqua/20 bg-aqua/10 px-3 text-xs font-black text-aqua transition-colors hover:bg-aqua hover:text-night xs:col-span-1"
+                      title="Digitally sign contract"
+                    >
+                      <FileSignature className="h-4 w-4" />
+                      Sign
+                    </button>
+                  )}
+                  {canOpenLinkedPdf && (
+                    <>
+                      <a
+                        href={getInvoiceViewUrl(linkedPdf)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex h-9 w-full items-center justify-center rounded-lg border border-white/5 bg-white/5 text-slate-400 transition-colors hover:text-violet xs:w-9"
+                        title="View Contract"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => openAssetLink(getInvoiceDownloadUrl(linkedPdf), 'download')}
+                        className="flex h-9 w-full items-center justify-center rounded-lg border border-white/5 bg-white/5 text-slate-400 transition-colors hover:text-violet xs:w-9"
+                        title="Download Contract"
+                      >
+                        <Download className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                  
+                  <PDFDownloadLink
+                    document={<ContractPDF contract={contract} project={project} />}
+                    fileName={`${contract.title}.pdf`}
+                    className="flex h-9 w-full items-center justify-center rounded-lg border border-white/5 bg-white/5 text-slate-400 hover:text-violet transition-colors xs:w-9"
+                  >
+                    {({ loading }) => (
+                      loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />
+                    )}
+                  </PDFDownloadLink>
+                </div>
               </div>
 
-              {!link.isValid && <p className="mt-3 rounded-xl border border-ember/25 bg-ember/10 p-3 text-xs font-bold text-ember">This contract link is invalid. Ask the admin to replace it.</p>}
-
-              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <button type="button" disabled={!link.isValid} onClick={() => openAssetLink(contract.contract_url, 'view')} className="focus-ring flex items-center justify-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-black text-white/70 transition hover:border-violet/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-35">
-                  <FileCheck2 className="h-4 w-4" />
-                  View Contract
-                </button>
-                <button type="button" disabled={!link.isValid} onClick={() => openAssetLink(contract.contract_url, 'download')} className="focus-ring flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-xs font-black text-night transition hover:bg-aqua disabled:cursor-not-allowed disabled:opacity-35">
-                  <Download className="h-4 w-4" />
-                  Download Contract
-                </button>
-                {isAdmin && (
-                  <button type="button" disabled={deletingId === contract.id} onClick={() => remove(contract)} className="focus-ring flex items-center justify-center gap-2 rounded-xl border border-ember/25 bg-ember/10 px-3 py-2 text-xs font-black text-ember disabled:opacity-50">
-                    {deletingId === contract.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                    Delete
-                  </button>
-                )}
-              </div>
-            </article>
-          );
-        })}
+              {!isAdmin && signingId === contract.id && (
+                <div className="mt-5 rounded-2xl border border-aqua/15 bg-aqua/[0.04] p-4">
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-aqua" />
+                    <div>
+                      <p className="text-sm font-black text-white">Digital agreement confirmation</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">Typing your legal name confirms you agree to this contract electronically via Zenvy Studio.</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <label className="section-label">Legal Full Name</label>
+                      <input value={signerName} onChange={(event) => setSignerName(event.target.value)} className="field mt-1.5 px-3 py-2.5 text-sm" />
+                    </div>
+                    <div>
+                      <label className="section-label">Signing Email</label>
+                      <input type="email" value={signerEmail} onChange={(event) => setSignerEmail(event.target.value)} className="field mt-1.5 px-3 py-2.5 text-sm" />
+                    </div>
+                  </div>
+                  <label className="mt-4 flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs leading-5 text-slate-300">
+                    <input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} className="mt-1 h-4 w-4 accent-cyan-400" />
+                    <span>I have reviewed the agreement and consent to use an electronic signature for this contract.</span>
+                  </label>
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <button type="button" onClick={() => setSigningId('')} className="btn-ghost">Cancel</button>
+                    <button type="button" onClick={() => submitSignature(contract)} disabled={savingSignature} className="btn-primary">
+                      {savingSignature ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Digitally Sign Agreement
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            );
+          })
+        )}
       </div>
     </section>
   );

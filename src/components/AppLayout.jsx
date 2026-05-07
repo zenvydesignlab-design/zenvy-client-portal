@@ -13,7 +13,7 @@ export default function AppLayout({ admin = false }) {
         <Sidebar admin={admin} />
         <div className="flex min-w-0 flex-1 flex-col">
           <Header admin={admin} onMenuClick={() => setDrawerOpen(true)} />
-          <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-36 pt-4 sm:px-6 lg:px-8 lg:pb-8">
+          <main className="mx-auto w-full max-w-7xl flex-1 px-4 pb-32 pt-8 sm:px-8 sm:pt-10 lg:pb-16">
             <Outlet />
           </main>
         </div>
